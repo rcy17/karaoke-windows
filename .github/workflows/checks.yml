@@ -1,0 +1,103 @@
+name: Static checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows / native Python and JavaScript
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install native dependencies
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.11.0 torchaudio==2.11.0
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pip install -r requirements-dev.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pip check
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm ci
+      - name: Check all source
+        run: |
+          ruff check .
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ty check --python (Get-Command python).Source
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run lint
+
+  lint:
+    name: Python / Ruff
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements-lint.txt
+      - run: ruff check .
+
+  types:
+    name: Python / ty
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements-*.txt
+            karaoke/requirements*.txt
+            .github/workflows/checks.yml
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.11.0 torchaudio==2.11.0
+          python -m pip install -r requirements-dev.txt
+          python -m pip check
+      - name: Check all Python types
+        run: ty check --python "$(command -v python)"
+
+  javascript:
+    name: JavaScript / ESLint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install lint dependencies
+        run: npm ci
+      - name: Check all owned JavaScript
+        run: npm run lint

@@ -200,7 +200,7 @@ karaoke/
   models/pretrained/*.yaml        分离模型配置（不含权重）
 ```
 
-详细入口见[源码导航](karaoke/README.md)。仓库保存代码、测试、配置、文档与上述界面截图；运行所需的歌曲、歌词库、音轨、MV、任务数据库、实验产物、模型权重、大型第三方研究仓库和虚拟环境由使用者另行准备。
+详细入口见[源码导航](karaoke/README.md)。仓库保存代码、配置、文档与上述界面截图；运行所需的歌曲、歌词库、音轨、MV、任务数据库、实验产物、模型权重、大型第三方研究仓库和虚拟环境由使用者另行准备。
 
 ## 许可
 
@@ -208,13 +208,6 @@ karaoke/
 
 ## 验证
 
-[GitHub Actions](https://github.com/rcy17/karaoke-windows/actions/workflows/tests.yml) 在每次 push 和 PR 时运行 Ruff、ty、ESLint、全部 Python 与 JavaScript 行为测试，并检查空数据目录启动；本分支新增 Windows 原生测试，保留原 Linux 检查。测试报告保留 14 天，也可从 Actions 页面手动运行。开发工具安装与检查命令见[贡献指南](CONTRIBUTING.md#修改与验证)。
+[GitHub Actions](https://github.com/rcy17/karaoke-windows/actions/workflows/checks.yml) 在 push、PR 和手动触发时运行 Windows 与 Linux 静态检查，包括 Ruff、ty 和 ESLint。开发工具安装与检查命令见[贡献指南](CONTRIBUTING.md#修改与验证)。
 
-准备完整 Python 环境并按 [安装说明](SETUP.md) 拉取 SOFA 源码后：
-
-```sh
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=karaoke .venv/bin/python -m pytest -q karaoke/test_api.py karaoke/test_room.py karaoke/test_algorithms.py
-node --test karaoke/test_player.mjs karaoke/test_pitch.mjs karaoke/test_search.mjs
-```
-
-这些测试使用临时文件和合成音频，无需歌曲库、模型权重或 API key。中文发音测试会读取 SOFA 的音素字典，日文发音依赖 pyopenjtalk 字典。
+本项目已移除单元／行为测试，禁止新增或恢复测试代码。保留静态检查、实际操作和正式产物校验；静态检查通过不能证明模型质量或整曲可唱，首次安装仍须完成 [SETUP 的首歌验收](SETUP.md#6-准备第一首歌)。

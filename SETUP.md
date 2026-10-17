@@ -33,7 +33,7 @@ $env:KARAOKE_TEXT_BACKEND = 'codex'
 $env:KARAOKE_WHISPER_BATCH_SIZE = '1'
 ```
 
-Windows 的日文文本前端固定安装 `pyopenjtalk-plus==0.4.1.post7`，仍以 `import pyopenjtalk` 调用，附带预编译扩展与字典，避免要求用户自行编译 C++。该版本通过原项目的日文读音反例；升级前需重跑发音与字幕测试，不能只检查包能导入。macOS/Linux 保留原 pyopenjtalk；许可见 [第三方说明](THIRD_PARTY.md)。本地 ASR 的 CTranslate2 CUDA 运行时与 PyTorch CUDA wheel 是两套依赖，仍需按下文准备 CUDA 12 cuBLAS/cuDNN 9；未具备时先使用 CPU，不能据此宣称 GPU 可用。
+Windows 的日文文本前端固定安装 `pyopenjtalk-plus==0.4.1.post7`，仍以 `import pyopenjtalk` 调用，附带预编译扩展与字典，避免要求用户自行编译 C++。该版本通过原项目的日文读音反例；升级前需实际核对发音和字幕效果，不能只检查包能导入。macOS/Linux 保留原 pyopenjtalk；许可见 [第三方说明](THIRD_PARTY.md)。本地 ASR 的 CTranslate2 CUDA 运行时与 PyTorch CUDA wheel 是两套依赖，仍需按下文准备 CUDA 12 cuBLAS/cuDNN 9；未具备时先使用 CPU，不能据此宣称 GPU 可用。
 
 Windows NVIDIA 环境可使用匹配的 `torch==2.11.0` / `torchaudio==2.11.0` CUDA 12.8 wheel（将上面两处 index-url 换为 `https://download.pytorch.org/whl/cu128`）。已在 RTX 4070 Ti SUPER 16 GB、驱动 610.74 上验证 CUDA 分离和本地 ASR；主环境 wheel 附带的 cuBLAS/cuDNN DLL 位于 `.venv/Lib/site-packages/torch/lib`，需在启动服务前加入 PATH，供 CTranslate2 子进程加载：
 
@@ -56,7 +56,7 @@ $env:PYTHONUTF8 = '1'
 .\.venv\Scripts\python.exe -m karaoke.api
 ```
 
-打开 <http://127.0.0.1:8746/>，在启动终端按 Ctrl+C 停止。保留经过验证的代理／网络设置；不要为本项目直接清空代理。只有完成第 6 节整曲首歌验收，才能称为可唱环境；空网页启动和行为测试不能证明本机分离、GPU、下载、整曲对齐均已验收。
+打开 <http://127.0.0.1:8746/>，在启动终端按 Ctrl+C 停止。保留经过验证的代理／网络设置；不要为本项目直接清空代理。只有完成第 6 节整曲首歌验收，才能称为可唱环境；空网页启动和静态检查不能证明本机分离、GPU、下载、整曲对齐均已验收。
 
 应用固定 JavaScript、CSS 和 WASM 静态资源的 MIME 类型，避免 Windows 注册表把 `.js` 标为 `text/plain`，使浏览器只显示外壳却拒绝执行模块。无需修改系统注册表；更新服务后用 Ctrl+F5 强制刷新网页，清除旧响应的缓存，并确认曲库与 SSE 状态正常加载。
 
@@ -235,17 +235,12 @@ nohup .venv/bin/python -u -m karaoke.api </dev/null >>karaoke/service-data/serve
 
 选歌时可用「有歌词优先」找到已经查到正文的版本。「歌词未确认」的版本仍可点歌，准备流程会继续查询其他来源。需要隔离排查时，使用 [ProbeSession / run_probe](karaoke/API.md#先验证音频) 共用阶段锁，再由正常 worker 完成原任务。
 
-## 7. 测试与范围
+## 7. 检查与范围
 
-安装开发依赖、主环境 PyTorch 和 SOFA 源码后：
+本项目禁止新增或恢复测试代码，已移除单元／行为测试及其执行入口。安装开发依赖后运行 Ruff、ty 和 ESLint，具体命令见[贡献指南](CONTRIBUTING.md#修改与验证)。
 
-```sh
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=karaoke .venv/bin/python -m pytest -q karaoke/test_api.py karaoke/test_room.py karaoke/test_algorithms.py
-node --test karaoke/test_player.mjs karaoke/test_pitch.mjs karaoke/test_search.mjs
-```
+仓库的 [Static checks workflow](.github/workflows/checks.yml) 在 push、PR 和手动触发时执行 Windows 与 Linux 静态检查，使用 Python 3.12 和 Node.js 22。CI 不需要配置密钥，不运行模型或歌曲处理。
 
-这些行为测试不发起在线模型调用，不要求歌曲库或模型权重。真正验证下载、分离、对齐和渲染，仍需完成以上资源准备并提交一个真实视频链接。首次模型／字典下载耗时与后续单曲处理耗时应分别记录。
-
-仓库的 [Tests workflow](.github/workflows/tests.yml) 在 push、PR 和手动触发时并行运行四个独立任务：Python Ruff、Python ty、Python 行为测试，以及 JavaScript lint 与行为测试，命令见[贡献指南](CONTRIBUTING.md#修改与验证)。Python 使用 3.12，JavaScript 使用 Node.js 22。ty 安装 Python 依赖后直接检查；Python 行为测试在 Ubuntu 24.04 上使用 CPU 版 PyTorch／torchaudio 2.11.0、上述固定版本的 SOFA 字典及 Noto Serif CJK 字体，准备日文发音字典后检查空库启动及全部行为测试。两组 JUnit 测试报告、启动日志和测试子进程日志保留 14 天。CI 不需要配置密钥；真实歌曲的分离质量和逐字起音验收仍单独进行。
+真正验证下载、分离、对齐和渲染，仍需完成以上资源准备和第 6 节整曲首歌验收。首次模型／字典下载耗时与后续单曲处理耗时应分别记录。
 
 正式入口是 `python -m karaoke.api`。`benchmark_neural.py` 和 `experiments/cjk-onsets-v003/run.py` 也是正式处理链的一部分；其他研究工具所需的素材和可选模型见[源码导航](karaoke/README.md)。

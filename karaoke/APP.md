@@ -147,12 +147,9 @@ Windows PowerShell 对应 `$env:KARAOKE_HOST = '0.0.0.0'`，再执行 `.\.venv\S
 
 ## 验证
 
-```sh
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=karaoke .venv/bin/python -m pytest -q karaoke/test_api.py karaoke/test_room.py karaoke/test_algorithms.py
-node --test karaoke/test_player.mjs karaoke/test_pitch.mjs karaoke/test_search.mjs
-```
+开发静态检查见[贡献指南](../CONTRIBUTING.md#修改与验证)。本项目禁止新增或恢复测试代码；播放器通过实际操作验证预处理和播放顺序、重复点歌复用音轨、等待加载、暂停／定位、混音、换歌与 SSE 状态同步，操作时不得干扰正在使用的服务。首次安装还须完成 [SETUP 的首歌验收](../SETUP.md#6-准备第一首歌)。
 
-覆盖预处理和播放顺序、重复点歌复用音轨、旧结束事件、等待加载、暂停／定位、混音保持时间、取消过期音轨加载、SSE 推送和断线清理。浏览器实测记录保留在原开发工作区的 `experiments/app-v001/`，未随源码上传。
+历史浏览器实测记录保留在原开发工作区的 `experiments/app-v001/`，未随源码上传。
 
 ### 平板播放
 

@@ -5,8 +5,8 @@
 ## 修改与验证
 
 - 围绕具体问题提交小改动，说明触发条件、修改后的行为和验证结果。优先修复共同机制，避免歌曲特例。
-- 扩展已有行为测试，覆盖实际故障和关键边界。
-- 在独立、空的数据目录验证服务启动；测试使用隔离房间和合成数据，真实下载另行验证。
+- 禁止编写、新增或恢复测试代码，包括单元测试、集成测试和测试夹具；验证使用静态检查、实际操作与现有产物校验工具。
+- 需要验证空库启动时使用独立数据目录和未占用端口，不干扰正在使用的服务；真实下载另行验证。
 - UI 改动检查桌面、手机和全屏；音频／字幕改动遵循[验收标准](karaoke/ACCEPTANCE.md)，保留完整失败样本与测量结果。
 
 安装开发工具并运行检查：
@@ -19,14 +19,7 @@ npm ci
 npm run lint
 ```
 
-Ruff 检查自有 Python 代码的错误、导入顺序和现代 Python 写法；ty 检查整个 `karaoke/`，包括算法、工具和测试；ESLint 检查前端 JavaScript、测试和自身配置。工具版本已固定，第三方源码和生成文件不纳入检查。类型问题优先补准数据边界；只有第三方声明不准确或必要的运行时替换，才在具体行注明原因并局部忽略。
-
-完整回归命令：
-
-```sh
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=karaoke .venv/bin/python -m pytest -q karaoke/test_api.py karaoke/test_room.py karaoke/test_algorithms.py
-npm test
-```
+Ruff 检查自有 Python 代码的错误、导入顺序和现代 Python 写法；ty 检查整个 `karaoke/`，包括算法和工具；ESLint 检查前端 JavaScript 和自身配置。工具版本已固定，第三方源码和生成文件不纳入检查。类型问题优先补准数据边界；只有第三方声明不准确或必要的运行时替换，才在具体行注明原因并局部忽略。
 
 Windows PowerShell（完成 SETUP 中的依赖与发音字典准备后）：
 
@@ -37,17 +30,9 @@ npm ci
 .\.venv\Scripts\ruff.exe check .
 .\.venv\Scripts\ty.exe check --python .venv/Scripts/python.exe
 npm run lint
-$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-$env:PYTHONPATH = 'karaoke'
-# 使用已安装、覆盖测试文字的完整 CJK 字体文件。
-$env:KARAOKE_FONT_FILE = 'C:\路径\NotoSerifCJK-Regular.ttc'
-.\.venv\Scripts\python.exe -m pytest -q karaoke/test_api.py karaoke/test_room.py karaoke/test_algorithms.py
-node --test karaoke/test_player.mjs karaoke/test_pitch.mjs karaoke/test_search.mjs
 ```
 
-旧有 API 行为测试通过测试夹具显式选择 `api` 后端并使用模拟响应；新增回归独立检查生产默认值、本地 ASR 与联网歌词互不阻断、Codex 订阅认证、缓存隔离和失败后不调用付费接口。不要在 CI 中放入个人 Codex 登录凭据。真实 CLI 和本地模型推理需另行实测，不把模拟响应测试称为模型质量验收。
-
-测试需要主环境依赖和 SOFA / pyopenjtalk 发音字典，不需要歌曲库、模型权重或 API key。CI 运行同一套 lint、类型检查、行为测试及空数据启动检查。
+CI 运行 Windows 与 Linux 静态检查，不执行测试代码。不要在 CI 中放入个人 Codex 登录凭据。真实 CLI、本地模型推理、空库启动和整曲产物需按相关安装与验收文档实际检查；静态检查不能替代模型质量验收。
 
 ## 文档写法
 
@@ -55,7 +40,7 @@ node --test karaoke/test_player.mjs karaoke/test_pitch.mjs karaoke/test_search.m
 
 ## 数据与凭据
 
-歌曲、歌词库、模型权重、生成文件、数据库、凭据、个人部署信息和运行报告留在仓库外或 Git 已忽略的数据目录。测试优先使用合成音频与自写短文本。文档截图等需要提交的第三方素材，使用授权明确的内容，并在[素材说明](docs/images/README.md)记录来源、展示范围和许可。
+歌曲、歌词库、模型权重、生成文件、数据库、凭据、个人部署信息和运行报告留在仓库外或 Git 已忽略的数据目录。文档截图等需要提交的第三方素材，使用授权明确的内容，并在[素材说明](docs/images/README.md)记录来源、展示范围和许可。
 
 提交前检查 `git diff --cached --stat` 和 `git diff --cached`。发布前对整个 Git 历史做密钥扫描，例如安装 Gitleaks 后运行：
 
