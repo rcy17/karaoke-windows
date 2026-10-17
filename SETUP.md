@@ -47,7 +47,7 @@ $env:KARAOKE_DEVICE = 'cuda'
 
 继续完成第 3、4 节的源码与模型准备。Windows 与其他系统使用相同的仓库内模型路径；`git clone` / `git checkout` 命令可直接执行。把 `mkdir -p 路径` 换成 `New-Item -ItemType Directory -Force 路径`，`cp` 换成 `Copy-Item`，虚拟环境的 `bin/python` 换成 `Scripts/python.exe`。ZIP 可用 `Expand-Archive`，tar 包用 Windows `tar -xf`；SHA-256 用 `Get-FileHash -Algorithm SHA256 文件路径`。含 `export` 的命令在 PowerShell 写成 `$env:变量名 = '值'`。这些设置仅作用于当前终端及其子进程，重启终端后需重新设置。
 
-字幕需要完整字体文件：安装覆盖歌曲语言的 Noto Serif CJK，在启动终端设置 `$env:KARAOKE_FONT_FILE = 'C:\路径\NotoSerifCJK-Regular.ttc'`。Windows 不依赖 macOS 字体目录或 Linux Fontconfig；缺字仍明确报错，不能以方框代替歌词。Qwen 独立环境同理设置 `KARAOKE_QWEN_PYTHON` 为其 `Scripts/python.exe`。
+Windows 默认中文字幕使用系统微软雅黑粗体 `msyhbd.ttc`，白字黑边、饱和蓝色扫亮。`KARAOKE_FONT_FILE` 的显式设置优先；此前配置过宋体时，可在启动终端改为 `$env:KARAOKE_FONT_FILE = Join-Path $env:WINDIR 'Fonts/msyhbd.ttc'`，重启后供新任务使用。其他语言应指定覆盖其全部字符的字体，例如 Noto CJK。微软字体由本机系统提供，不随仓库分发。Windows 不依赖 macOS 字体目录或 Linux Fontconfig；缺字仍明确报错，不能以方框代替歌词。Qwen 独立环境同理设置 `KARAOKE_QWEN_PYTHON` 为其 `Scripts/python.exe`。
 
 准备好模型和第 5 节的文本后端后启动：
 

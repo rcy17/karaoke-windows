@@ -256,7 +256,8 @@ def annotated_lines(text, readings, font, ruby_font, tracking, maximum, balanced
 
 @lru_cache(maxsize=32)
 def system_font(name):
-    path = Path('/System/Library/Fonts')/name
+    root = Path(os.environ.get('WINDIR', 'C:/Windows'))/'Fonts' if os.name == 'nt' else Path('/System/Library/Fonts')
+    path = root/name
     if path.exists():
         return path
     # macOS stores some Japanese font filenames in decomposed Unicode.
@@ -295,6 +296,8 @@ def resolve_font(text, style=DEFAULT_STYLE, language='auto', font_file=None):
     font_file = font_file or os.getenv('KARAOKE_FONT_FILE')
     script = script_for(text, language)
     name, index = STYLES[style]['fonts'][script]
+    if os.name == 'nt':
+        name, index = STYLES[style].get('windows_fonts', {}).get(script, (name, index))
     # Formatting controls (e.g. BOM / zero-width joiner) have no visible glyph.
     # Keep the source string and its timing indices intact.
     required = {ord(c) for c in text if not c.isspace() and unicodedata.category(c) != 'Cf'}
@@ -461,7 +464,7 @@ def caption_image(text, width=1280, height=None, font_file=None,
         raise ValueError('tone must be light or dark')
     color = spec['color'] if tone == 'light' else '#172028'
     shadow_rgb = (0, 0, 0) if tone == 'light' else (255, 255, 255)
-    # A fine local edge and soft shadow protect glyphs without a heavy outline.
+    # Keep the configured outline outside the fill, including during the sweep.
     edge_radius = max(1, round(spec.get('outline_width', .5)*font_scale))
     for alpha in [visible_mask.filter(ImageFilter.GaussianBlur(spec.get('shadow_blur', 2.4)*font_scale))
                        .point(lambda a: round(a*spec.get('shadow_alpha', .6))),

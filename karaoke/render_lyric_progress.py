@@ -17,6 +17,7 @@ from subtitle_style import (
     CaptionOverflow,
     caption_height,
     caption_image,
+    resolve_font,
     song_intro_image,
     static_video_scrim,
 )
@@ -368,7 +369,8 @@ def main():
         'frame_rate': str(fps),
         'duration': args.duration, 'mode': args.mode, 'style': args.style, 'style_version': TOKENS['version'],
         'style_parameters': STYLES[args.style],
-        'font': 'Bold Songti / Hiragino Mincho W6; source glyphs verified',
+        'fonts': sorted({(str(path), index) for cue in cues
+                         for path, index, _ in [resolve_font(cue['text'], args.style, args.language)]}),
         'shown_lines': sorted(i+1 for i in shown),
         'display_pages': pagination,
         'furigana': readings_report,
