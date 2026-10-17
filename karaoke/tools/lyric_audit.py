@@ -14,7 +14,10 @@ from unittest.mock import patch
 
 from rapidfuzz.distance import Levenshtein
 
-from .. import lyric_lookup
+from karaoke.file_lock import lock_file
+from karaoke.file_ops import replace_file
+
+from .. import lyric_lookup, text_backend
 from ..stage_cache import StageCache
 
 
@@ -26,7 +29,7 @@ def write(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2)+'\n')
-    temporary.replace(path)
+    replace_file(temporary, path)
 
 
 def text_key(lines):
@@ -120,7 +123,7 @@ def paced_requests(interval, protected_root=None):
 def run_case(case, output, model):
     folder = output/'cases'/case['case_id']
     folder.mkdir(parents=True, exist_ok=True)
-    identity = dict(input_sha256=digest(case), metadata_model=model,
+    identity = dict(input_sha256=digest(case), metadata_model=model, text_backend=text_backend.configuration(model),
                     **lyric_lookup.prepared_lyrics_identity(case['url'],case['metadata']))
     result_path = folder/'result.json'
     if result_path.exists():
@@ -180,8 +183,7 @@ def main():
     args.output.mkdir(parents=True,exist_ok=True)
     results = []
     with (args.output/'run.lock').open('w') as lock:
-        import fcntl
-        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        lock_file(lock, blocking=False)
         with paced_requests(args.interval,args.protected_root), ThreadPoolExecutor(max_workers=args.workers) as pool:
             futures = [pool.submit(run_case,c,args.output,args.model) for c in selected]
             for future in as_completed(futures):

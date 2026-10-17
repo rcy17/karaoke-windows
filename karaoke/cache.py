@@ -140,7 +140,7 @@ class SongCache:
                     except FileNotFoundError:
                         continue
                     if stat.S_ISREG(info.st_mode) and (is_log or info.st_size <= 2*1024**2):
-                        keep.add(os.path.relpath(path, folder))
+                        keep.add(os.path.relpath(path, folder).replace(os.sep, '/'))
             return keep
         except (OSError, ValueError, KeyError):
             return set()

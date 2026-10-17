@@ -1,4 +1,8 @@
 """Source-bound Japanese readings and cached Cantonese dictionary readings."""
+if __package__:
+    from .file_ops import replace_file
+else:
+    from file_ops import replace_file
 import hashlib
 import inspect
 import json
@@ -273,7 +277,7 @@ def prepare_readings(lines, source_url, cache, language='Japanese'):
             packet['status'] = 'published'
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(packet, ensure_ascii=False, indent=2)+'\n')
-    temporary.replace(path)
+    replace_file(temporary, path)
     return path
 
 

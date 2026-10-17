@@ -22,6 +22,7 @@ from opencc import OpenCC
 from rapidfuzz.distance import Levenshtein
 
 from .anchors_from_asr import text_units
+from .file_lock import lock_file
 from .job_schema import (
     language_code,
     provider_error,
@@ -120,10 +121,9 @@ def cached_lyric_request(provider, identity, cache, request, minimum_delay=30):
                 report = lyric_request_error(error, minimum_delay)
                 packet = dict(error=report)
                 if report['http_status'] in (401, 429):
-                    import fcntl
                     hold.parent.mkdir(parents=True, exist_ok=True)
                     with hold.with_suffix('.lock').open('a') as lock:
-                        fcntl.flock(lock, fcntl.LOCK_EX)
+                        lock_file(lock)
                         try:
                             previous = json.loads(hold.read_text())
                         except (OSError, ValueError):
@@ -1210,7 +1210,7 @@ def prepared_lyrics_identity(url, metadata):
     return dict(url=url, metadata_sha256=hashlib.sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest(),
                 code_sha256={name: hashlib.sha256((root/name).read_bytes()).hexdigest()
                              for name in ('lyric_lookup.py', 'lyric_consensus.py', 'song_sources.py', 'source_captions.py',
-                                          'lyric_readings.py')})
+                                          'lyric_readings.py', 'text_backend.py')})
 
 
 def read_prepared_lyrics(path, url, metadata):

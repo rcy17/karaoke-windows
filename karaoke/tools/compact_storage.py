@@ -4,13 +4,14 @@ No models or lyrics are recomputed. Old media survives until the new result is
 fully checked and published. Job identities, versions and queue are unchanged.
 """
 import argparse
-import fcntl
 import json
 import subprocess
 from pathlib import Path
 
 from karaoke.api import Store
 from karaoke.exact_stems import compact_playback_audio, sha
+from karaoke.file_lock import lock_file
+from karaoke.file_ops import replace_file
 from karaoke.job_schema import playback_stems
 from karaoke.playback_video import mux_playback_video
 from karaoke.tools.soak import verify_stems
@@ -19,7 +20,7 @@ from karaoke.tools.soak import verify_stems
 def save(path, value):
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2)+'\n')
-    temporary.replace(path)
+    replace_file(temporary, path)
 
 
 def video_hash(path):
@@ -61,7 +62,7 @@ def migrate(store, job):
             evidence['video_after'] = video_hash(temporary)
             if evidence['video_before'] != evidence['video_after']:
                 raise ValueError('Video frames changed during storage migration')
-            temporary.replace(target)
+            replace_file(temporary, target)
         finally:
             temporary.unlink(missing_ok=True)
         updated['artifacts']['mv'] = dict(path=target.name, bytes=target.stat().st_size, sha256=sha(target))
@@ -83,7 +84,7 @@ def main():
     parser.add_argument('--job', action='append')
     args = parser.parse_args()
     with (args.data/'worker.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_file(lock, blocking=False)
         store = Store(args.data)
         jobs = store.list(-1)
         if any(j['status'] == 'running' for j in jobs):

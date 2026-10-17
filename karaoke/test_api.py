@@ -30,10 +30,239 @@ from karaoke.pipeline import (
     write_json,
 )
 from karaoke.song_sources import SongText, find_verified_lyrics, prepare_song_text, video_song_info
+from karaoke.stage_cache import StageCache
 from karaoke.stage_progress import PREFIX, parse_progress, progress_items
 from karaoke.transcribe_lyrics import repetition_loop, transcribe
 
 URL = 'https://www.youtube.com/watch?v=n5sjpCQhTDk'
+
+
+def assert_process_stopped(pid):
+    import os
+    if os.name != 'nt':
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+        return
+    # os.kill(pid, 0) terminates a live process on Windows; never use it as a probe.
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.OpenProcess(0x100000, False, pid)
+    if not handle:
+        assert ctypes.get_last_error() == 87  # PID no longer exists.
+        return
+    try:
+        assert kernel.WaitForSingleObject(handle, 2000) == 0
+    finally:
+        kernel.CloseHandle(handle)
+
+
+@pytest.mark.parametrize('transient', [True, False])
+def test_atomic_publication_keeps_old_content_during_windows_contention(tmp_path, monkeypatch, transient):
+    from karaoke import file_ops
+    source, target = tmp_path/'new.tmp', tmp_path/'record.json'
+    source.write_text('new record')
+    target.write_text('old record')
+    original, calls = file_ops.os.replace, []
+    def replace(a, b):
+        calls.append((a, b))
+        assert target.read_text() == 'old record'
+        if not transient or len(calls) < 3:
+            error = PermissionError('sharing violation')
+            error.winerror = 32
+            raise error
+        original(a, b)
+    monkeypatch.setattr(file_ops, 'WINDOWS', True)
+    monkeypatch.setattr(file_ops.os, 'replace', replace)
+    monkeypatch.setattr(file_ops.time, 'sleep', lambda seconds: None)
+    if transient:
+        file_ops.replace_file(source, target)
+        assert target.read_text() == 'new record' and len(calls) == 3
+    else:
+        with pytest.raises(PermissionError):
+            file_ops.replace_file(source, target)
+        assert target.read_text() == 'old record' and source.read_text() == 'new record'
+        assert len(calls) == 21
+
+
+def test_default_backends_start_empty_without_models_or_api_key(tmp_path, monkeypatch):
+    from karaoke import local_asr, text_backend
+    for key in ('KARAOKE_ASR_BACKEND', 'KARAOKE_TEXT_BACKEND', 'OPENAI_API_KEY'):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv('KARAOKE_WHISPER_MODEL', str(tmp_path/'missing-model'))
+    assert local_asr.offline()
+    assert text_backend.configuration('unused')['backend'] == 'codex'
+    assert set(local_asr.configuration()['model_files'].values()) == {None}
+    with TestClient(create_app(tmp_path)) as client:
+        assert client.get('/health').json()['queued'] == 0
+        assert client.get('/v1/library').json()['songs'] == []
+        assert client.get('/v1/room').json()['entries'] == []
+        assert '<html' in client.get('/').text
+
+
+def test_cross_process_lock_keeps_record_readable_and_releases_on_exit(tmp_path):
+    from karaoke.file_lock import lock_file, unlock_file
+    path = tmp_path/'owner.json'
+    path.write_text('{"ready": true}', encoding='utf-8')
+    probe = ('import pathlib,sys; from karaoke.file_lock import lock_file; '
+             'p=pathlib.Path(sys.argv[1]); print(p.read_text()); f=p.open("r+"); '
+             '\ntry: lock_file(f,blocking=False)\nexcept BlockingIOError: sys.exit(7)')
+    with path.open('r+') as owner:
+        lock_file(owner)
+        result = subprocess.run([sys.executable, '-c', probe, str(path)], capture_output=True, timeout=10)
+        assert result.returncode == 7 and b'"ready": true' in result.stdout
+        unlock_file(owner)
+        result = subprocess.run([sys.executable, '-c', probe, str(path)], capture_output=True, timeout=10)
+        assert result.returncode == 0
+        lock_file(owner, blocking=False)
+    with path.open('r+') as owner:
+        lock_file(owner, blocking=False)
+
+
+def test_pipeline_reads_windows_progress_and_times_out_without_output(tmp_path, monkeypatch):
+    pipeline = Pipeline(dict(url=URL), tmp_path)
+    announced = Mock()
+    monkeypatch.setattr(pipeline, 'source_metadata_ready', announced)
+    pipeline.run_subprocess('download', [sys.executable, '-c',
+        'import sys; sys.stdout.buffer.write(b"KARAOKE_SOURCE_READY\\r\\n")'])
+    announced.assert_called_once()
+    with pytest.raises(StageFailure, match='超过允许'):
+        pipeline.run_subprocess('silent', [sys.executable, '-c', 'import time; time.sleep(30)'], timeout=.2)
+
+
+@pytest.mark.parametrize('backend', ['codex', 'local'])
+def test_local_asr_still_uses_selected_text_backend_and_cache(tmp_path, monkeypatch, backend):
+    from karaoke import text_backend
+    from karaoke.song_sources import extract_song_metadata
+    monkeypatch.setenv('KARAOKE_ASR_BACKEND', 'local')
+    monkeypatch.setenv('KARAOKE_TEXT_BACKEND', backend)
+    monkeypatch.setenv('KARAOKE_LOCAL_TEXT_MODEL', 'installed-model')
+    packet = dict(parsed=dict(title='自写测试', artist='测试作者', lyric_line_numbers=[1, 2]),
+                  model=backend+':test', usage=None)
+    generate = Mock(return_value=packet)
+    monkeypatch.setattr(text_backend, 'generate', generate)
+    with patch('karaoke.song_sources.OpenAI', side_effect=AssertionError('Paid API called')):
+        cache = StageCache(tmp_path)
+        evidence = dict(title='自写测试', description_lines=[dict(number=1, text='第一句')])
+        assert extract_song_metadata(evidence, 'unused', cache) == packet
+        assert extract_song_metadata(evidence, 'unused', cache) == packet
+        assert generate.call_count == 1
+        monkeypatch.setenv('KARAOKE_TEXT_BACKEND', 'none')
+        assert extract_song_metadata(evidence, 'unused', cache)['parsed'] is None
+        monkeypatch.setenv('KARAOKE_TEXT_BACKEND', 'local' if backend == 'codex' else 'codex')
+        extract_song_metadata(evidence, 'unused', cache)
+        assert generate.call_count == 2
+
+
+def test_local_asr_keeps_published_lyric_lookup(tmp_path, monkeypatch):
+    monkeypatch.setenv('KARAOKE_ASR_BACKEND', 'local')
+    monkeypatch.setenv('KARAOKE_TEXT_BACKEND', 'none')
+    lyrics = dict(title='Example', artist='Singer', language='English', lines=['A written line'])
+    fetch = Mock(return_value=lyrics)
+    monkeypatch.setattr('karaoke.lyric_lookup.prepare_online_lyrics', fetch)
+    assert Pipeline(dict(url=URL), tmp_path).prepare_text({}, 10) == lyrics
+    fetch.assert_called_once()
+
+
+def test_codex_text_uses_stdin_subscription_auth_and_validates_json(monkeypatch):
+    from pathlib import Path
+
+    from karaoke import text_backend
+    monkeypatch.setenv('KARAOKE_TEXT_BACKEND', 'codex')
+    monkeypatch.setenv('OPENAI_API_KEY', 'test-must-not-inherit')
+    monkeypatch.setenv('CODEX_API_KEY', 'test-must-not-inherit')
+    monkeypatch.setattr(text_backend, 'codex_command', lambda config: ['codex.exe'])
+    content = dict(title='中文 & $(test)', artist='Artist', lyric_line_numbers=[1])
+    def run(args, **kwargs):
+        assert args[-1] == '-' and '中文' in kwargs['input']
+        assert 'forced_login_method="chatgpt"' in args
+        assert '--ignore-user-config' in args and '--ephemeral' in args
+        assert not {'CODEX_API_KEY', 'OPENAI_API_KEY'} & kwargs['env'].keys()
+        assert kwargs['timeout'] == 180
+        assert kwargs.get('shell', False) is False
+        Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(content), encoding='utf-8')
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(text_backend, 'capture', run)
+    config = text_backend.configuration('unused')
+    assert text_backend.generate(config, [dict(role='user', content='中文')], SongText)['parsed'] == content
+    content['lyric_line_numbers'] = 'invalid'
+    with pytest.raises(ValueError):
+        text_backend.generate(config, [dict(role='user', content='中文')], SongText)
+
+
+@pytest.mark.parametrize('url', ['https://api.openai.com/v1', 'http://localhost.example/v1', 'http://user:pass@localhost/v1'])
+def test_local_text_rejects_remote_or_credential_urls(monkeypatch, url):
+    from karaoke.text_backend import configuration
+    monkeypatch.setenv('KARAOKE_TEXT_BACKEND', 'local')
+    monkeypatch.setenv('KARAOKE_LOCAL_TEXT_URL', url)
+    with pytest.raises(ValueError, match='loopback'):
+        configuration('unused')
+
+
+def test_codex_failure_does_not_call_paid_api(tmp_path, monkeypatch):
+    from karaoke import text_backend
+    from karaoke.song_sources import extract_song_metadata
+    monkeypatch.setenv('KARAOKE_TEXT_BACKEND', 'codex')
+    monkeypatch.setattr(text_backend, 'generate', Mock(side_effect=ValueError('subscription limit')))
+    with patch('karaoke.song_sources.OpenAI', side_effect=AssertionError('Paid API called')):
+        with pytest.raises(ValueError, match='subscription limit'):
+            extract_song_metadata({}, 'unused', StageCache(tmp_path))
+
+
+def test_cli_timeout_stops_npm_style_descendant(tmp_path):
+    import os
+
+    from karaoke.process_tree import capture
+    pidfile = tmp_path/'child.pid'
+    child = ('import os,pathlib,time; '
+             f'pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); time.sleep(30)')
+    parent = ('import subprocess,sys,time; '
+              f'subprocess.Popen([sys.executable,"-c",{child!r}]); time.sleep(30)')
+    with pytest.raises(subprocess.TimeoutExpired):
+        capture([sys.executable, '-c', parent], input='', cwd=tmp_path, env=dict(os.environ), timeout=2)
+    assert_process_stopped(int(pidfile.read_text()))
+
+
+def test_codex_failure_keeps_reason_and_unmodified_draft(monkeypatch):
+    from karaoke import text_backend
+    monkeypatch.setenv('KARAOKE_TEXT_BACKEND', 'codex')
+    monkeypatch.setattr(text_backend, 'generate', Mock(side_effect=ValueError('Check codex login status')))
+    with patch('karaoke.song_sources.OpenAI', side_effect=AssertionError('Paid API called')):
+        result = prepare_song_text(dict(url=URL), dict(title='Source title'),
+            dict(language='english', segments=[dict(text='One short line', start=1, end=3)]),
+            10, catalog_root=None, model='unused')
+    assert result['lines'] == ['One short line'] and result['provenance']['needs_review']
+    assert 'codex login status' in result['provenance']['metadata_error']['message']
+
+
+@pytest.mark.parametrize('finish', ['stop', 'length'])
+def test_local_text_posts_schema_to_loopback_and_rejects_truncated_output(monkeypatch, finish):
+    import httpx
+
+    from karaoke import text_backend
+    monkeypatch.setenv('KARAOKE_TEXT_BACKEND', 'local')
+    monkeypatch.setenv('KARAOKE_LOCAL_TEXT_MODEL', 'installed-model')
+    def respond(request):
+        assert str(request.url) == 'http://127.0.0.1:11434/v1/chat/completions'
+        assert 'authorization' not in request.headers
+        payload = json.loads(request.content)
+        assert payload['model'] == 'installed-model'
+        assert payload['response_format']['json_schema']['schema']['additionalProperties'] is False
+        return httpx.Response(200, json=dict(choices=[dict(finish_reason=finish,
+            message=dict(content=json.dumps(dict(title='Test', artist='Artist', lyric_line_numbers=[]))))]))
+    client_type = httpx.Client
+    monkeypatch.setattr(httpx, 'Client', lambda **kwargs: client_type(
+        transport=httpx.MockTransport(respond), **kwargs))
+    config = text_backend.configuration('unused')
+    if finish == 'stop':
+        assert text_backend.generate(config, [], SongText)['parsed']['title'] == 'Test'
+    else:
+        with pytest.raises(ValueError, match='complete result'):
+            text_backend.generate(config, [], SongText)
 
 
 @pytest.fixture(autouse=True)
@@ -6216,7 +6445,8 @@ def test_normal_preparation_reuses_bound_lyrics_and_refetches_stale_cache(tmp_pa
     lyrics: dict[str, Any] = dict(title='Example', artist='Singer', language='English', lines=['Original published text'],
                   source_url=URL, provenance=dict(route='lyrics_first', kind='online_lyric_text'))
     packet: dict[str, Any] = dict(identity=prepared_lyrics_identity(URL, metadata), lyrics=lyrics,
-                  selection=dict(duration=10, metadata_model='gpt-5-mini'))
+                  selection=dict(duration=10, metadata_model='gpt-5-mini',
+                      text_backend=dict(backend='api', model='gpt-5-mini')))
     request: dict[str, Any] = dict(url=URL)
     if change == 'duration': packet['selection']['duration'] = 30
     if change == 'metadata_model': packet['selection']['metadata_model'] = 'old-model'
@@ -8336,7 +8566,6 @@ def test_audio_pipeline_runs_separation_and_alignment_but_cannot_claim_a_full_mv
 
 @pytest.mark.parametrize('oversized', [False, True])
 def test_focused_probe_obeys_shared_budget_and_preserves_checkpoints(tmp_path, oversized):
-    import os
 
     import httpx
 
@@ -8363,19 +8592,18 @@ def test_focused_probe_obeys_shared_budget_and_preserves_checkpoints(tmp_path, o
                 run_probe(client, 'http://test', folder, [sys.executable, '-c', code])
         else:
             assert run_probe(client, 'http://test', folder, [sys.executable, '-c', code]) == 0
-    with pytest.raises(ProcessLookupError):
-        os.kill(int(pidfile.read_text()), 0)
+    assert_process_stopped(int(pidfile.read_text()))
     assert (folder/'checkpoint.wav').read_bytes() == b'reusable'
 
 
 @pytest.mark.parametrize('interactive', [False, True])
 def test_focused_probe_reaps_descendants_after_parent_exit(tmp_path, interactive):
-    import fcntl
     import os
     import signal
     from concurrent.futures import ThreadPoolExecutor
     from pathlib import Path
 
+    from karaoke.file_lock import lock_file
     from karaoke.tools.soak import run_probe
     pause = tmp_path/'preparation.pause'
     pause.write_text('probe owner')
@@ -8383,8 +8611,8 @@ def test_focused_probe_reaps_descendants_after_parent_exit(tmp_path, interactive
     with TestClient(app) as client, ThreadPoolExecutor(max_workers=1) as pool:
         job = client.post('/v1/jobs', json={'url': URL}).json()['id']
         folder = tmp_path/job
-        child = ('import os,pathlib,signal,time,fcntl; signal.signal(signal.SIGTERM,signal.SIG_IGN); '
-                 f'lock=open({str(folder/"child.lock")!r},"w"); fcntl.flock(lock,fcntl.LOCK_EX); '
+        child = ('import os,pathlib,signal,time; from karaoke.file_lock import lock_file; signal.signal(signal.SIGTERM,signal.SIG_IGN); '
+                 f'lock=open({str(folder/"child.lock")!r},"w"); lock_file(lock); '
                  f'pathlib.Path({str(folder/"child")!r}).write_text(str(os.getpid())); time.sleep(60)')
         parent = ('import os,pathlib,subprocess,sys,time; '
                   f'p=pathlib.Path({str(folder)!r}); (p/"parent").write_text(str(os.getpid())); '
@@ -8396,12 +8624,12 @@ def test_focused_probe_reaps_descendants_after_parent_exit(tmp_path, interactive
         try:
             assert future.result(timeout=12) == 0
             assert (folder/'cwd').read_text() == str(Path(__file__).resolve().parents[1])
-            with (folder/'child.lock').open() as lock:
+            with (folder/'child.lock').open('r+') as lock:
                 # SIGKILL delivery is asynchronous, even after the parent exits.
                 deadline = time.monotonic()+2
                 while True:
                     try:
-                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        lock_file(lock, blocking=False)
                         break
                     except BlockingIOError:
                         if time.monotonic() >= deadline:
@@ -8410,7 +8638,7 @@ def test_focused_probe_reaps_descendants_after_parent_exit(tmp_path, interactive
         finally:
             if (folder/'parent').exists():
                 try:
-                    os.killpg(int((folder/'parent').read_text()), signal.SIGKILL)
+                    os.killpg(int((folder/'parent').read_text()), signal.SIGKILL) if os.name != 'nt' else None
                 except (ProcessLookupError, PermissionError):
                     # macOS may retain an exited orphan owned by launchd briefly.
                     pass
@@ -10951,8 +11179,11 @@ class BatchedInferencePipeline:
         if failure != 'fatal':
             second = recognize(np.ones(8000, dtype=np.float32))
             assert second['text'] == f'{pid}:2:8000:8000.0'
-    with pytest.raises(ChildProcessError):
-        os.waitpid(pid, os.WNOHANG)
+    if os.name != 'nt':
+        with pytest.raises(ChildProcessError):
+            os.waitpid(pid, getattr(os, 'WNOHANG', 0))
+    else:
+        assert_process_stopped(pid)
     assert not list(tmp_path.glob('recognizer-*'))
 
 
@@ -10995,6 +11226,7 @@ def test_offline_metadata_and_vocal_review_keep_unverified_gaps(tmp_path, monkey
     from karaoke.song_sources import extract_song_metadata
     from karaoke.vocal_review import review_gaps, speech_intervals
     monkeypatch.setenv('KARAOKE_ASR_BACKEND', 'local')
+    monkeypatch.setenv('KARAOKE_TEXT_BACKEND', 'none')
     with patch('karaoke.song_sources.OpenAI', side_effect=AssertionError('API called')), \
          patch('openai.OpenAI', side_effect=AssertionError('API called')):
         assert extract_song_metadata({}, 'unused')['parsed'] is None
@@ -11024,7 +11256,7 @@ def test_local_batch_cache_tracks_model_audio_and_batch_size(tmp_path, monkeypat
     local_asr.cached_recognition(audio, 'en', output)
     audio.write_bytes(b'new source')
     local_asr.cached_recognition(audio, 'en', output)
-    monkeypatch.setenv('KARAOKE_WHISPER_BATCH_SIZE', '1')
+    monkeypatch.setenv('KARAOKE_WHISPER_BATCH_SIZE', '2')
     local_asr.cached_recognition(audio, 'en', output)
     assert len(calls) == 4
 
@@ -12586,7 +12818,6 @@ def test_playback_survey_runs_each_case_once_and_keeps_user_queue(tmp_path, monk
 
 @pytest.mark.parametrize('budget', ['normal', 'quota_full', 'unlimited', 'disk_full', 'transient_disconnect', 'disconnected'])
 def test_probe_session_overlaps_children_and_stops_them_together(tmp_path, budget):
-    import os
     from concurrent.futures import ThreadPoolExecutor
 
     import httpx
@@ -12633,8 +12864,7 @@ def test_probe_session_overlaps_children_and_stops_them_together(tmp_path, budge
                     assert future.result(timeout=10) == 0
     assert all(p.exists() for p in pids)
     for pid in pids:
-        with pytest.raises(ProcessLookupError):
-            os.kill(int(pid.read_text()), 0)
+        assert_process_stopped(int(pid.read_text()))
     assert all((folder/'checkpoint').read_bytes() == b'keep' for folder in folders)
     if budget == 'transient_disconnect':
         assert any('Probe monitor retry after ReadError' in (folder/'probe.log').read_text() for folder in folders)

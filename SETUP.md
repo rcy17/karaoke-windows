@@ -2,6 +2,52 @@
 
 所有命令从仓库根目录执行。按下面的步骤准备服务、处理环境和模型，再完成第一首歌。
 
+本分支以 Windows 原生运行、本地音频模型和无需额外 API 费用的文本处理为默认方向。原有 macOS/Linux 安装方法、模型来源、固定版本和验收流程继续适用。默认不会使用已有的 `OPENAI_API_KEY` 发起付费请求。
+
+## Windows PowerShell
+
+使用 Windows 10/11 x64、Python 3.12、Git、Node.js 22.13+，并把较新的 FFmpeg/ffprobe 加入 PATH。严格三轨验收／独立 MP3 导出还需 LAME；普通两轨 FLAC 播放不需要 LAME。不要混用 Anaconda、WSL 与项目虚拟环境的解释器。可用 `Get-Command python, node, ffmpeg, ffprobe` 查看实际程序位置，用 `Get-CimInstance Win32_ComputerSystem | Select-Object TotalPhysicalMemory` 查看内存，NVIDIA 主机用 `nvidia-smi` 查看显卡与驱动。
+
+只启动空曲库：
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -X utf8 -m pip install -r karaoke/requirements-api.txt
+.\.venv\Scripts\python.exe -X utf8 -m karaoke.api
+```
+
+完整主环境与分离环境（先停止前面的服务）：
+
+```powershell
+$env:PYTHONUTF8 = '1'
+# 下面为 CPU wheel 示例。NVIDIA GPU 请按 PyTorch 官方安装器选择对应 CUDA index-url。
+.\.venv\Scripts\python.exe -m pip install torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+py -3.12 -m venv .venv-separator
+.\.venv-separator\Scripts\python.exe -m pip install torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+.\.venv-separator\Scripts\python.exe -m pip install 'audio-separator[cpu]==0.44.5' 'librosa==0.11.0'
+.\.venv-separator\Scripts\python.exe -c 'from audio_separator.separator import Separator'
+$env:KARAOKE_SEPARATOR_PYTHON = (Resolve-Path .venv-separator/Scripts/python.exe).Path
+$env:KARAOKE_ASR_BACKEND = 'local'
+$env:KARAOKE_TEXT_BACKEND = 'codex'
+$env:KARAOKE_WHISPER_BATCH_SIZE = '1'
+```
+
+Windows 的日文文本前端固定安装 `pyopenjtalk-plus==0.4.1.post7`，仍以 `import pyopenjtalk` 调用，附带预编译扩展与字典，避免要求用户自行编译 C++。该版本通过原项目的日文读音反例；升级前需重跑发音与字幕测试，不能只检查包能导入。macOS/Linux 保留原 pyopenjtalk；许可见 [第三方说明](THIRD_PARTY.md)。本地 ASR 的 CTranslate2 CUDA 运行时与 PyTorch CUDA wheel 是两套依赖，仍需按下文准备 CUDA 12 cuBLAS/cuDNN 9；未具备时先使用 CPU，不能据此宣称 GPU 可用。
+
+继续完成第 3、4 节的源码与模型准备。Windows 与其他系统使用相同的仓库内模型路径；`git clone` / `git checkout` 命令可直接执行。把 `mkdir -p 路径` 换成 `New-Item -ItemType Directory -Force 路径`，`cp` 换成 `Copy-Item`，虚拟环境的 `bin/python` 换成 `Scripts/python.exe`。ZIP 可用 `Expand-Archive`，tar 包用 Windows `tar -xf`；SHA-256 用 `Get-FileHash -Algorithm SHA256 文件路径`。含 `export` 的命令在 PowerShell 写成 `$env:变量名 = '值'`。这些设置仅作用于当前终端及其子进程，重启终端后需重新设置。
+
+字幕需要完整字体文件：安装覆盖歌曲语言的 Noto Serif CJK，在启动终端设置 `$env:KARAOKE_FONT_FILE = 'C:\路径\NotoSerifCJK-Regular.ttc'`。Windows 不依赖 macOS 字体目录或 Linux Fontconfig；缺字仍明确报错，不能以方框代替歌词。Qwen 独立环境同理设置 `KARAOKE_QWEN_PYTHON` 为其 `Scripts/python.exe`。
+
+准备好模型和第 5 节的文本后端后启动：
+
+```powershell
+$env:PYTHONUTF8 = '1'
+.\.venv\Scripts\python.exe -m karaoke.api
+```
+
+打开 <http://127.0.0.1:8746/>，在启动终端按 Ctrl+C 停止。保留经过验证的代理／网络设置；不要为本项目直接清空代理。只有完成第 6 节整曲首歌验收，才能称为可唱环境；空网页启动和行为测试不能证明本机分离、GPU、下载、整曲对齐均已验收。
+
 ## 1. 网页与任务服务
 
 只启动界面不需要下载模型：
@@ -31,7 +77,7 @@ export KARAOKE_SEPARATION_BATCH_SIZE=1
 export KARAOKE_WHISPER_BATCH_SIZE=1  # 仅本地 Whisper 模式使用
 ```
 
-前三项默认 1；本地 Whisper 批次默认 8，内存预算有限时改为 1。同时准备多首歌或调大批次需要额外内存和显存。
+以上四项默认 1。同时准备多首歌或调大批次需要额外内存和显存。
 
 需要 `ffmpeg`、`ffprobe` 和 Node.js 22+ 在 PATH 中；严格音频验收及独立 MP3 导出还需要 `lame`。例如 macOS 使用 `brew install ffmpeg lame node`，Debian/Ubuntu 使用 `sudo apt-get install ffmpeg lame libsndfile1` 并安装 Node.js 22+。普通点歌只生成底轨（伴奏＋伴唱）与主唱两轨 FLAC，不调用 LAME；FFmpeg 负责母版解码、公共增益转换与视频编码。YouTube 下载启用 Node.js 执行播放器脚本；`yt-dlp[default]` 同时安装与下载器版本配套的 EJS 组件，不在下载时拉取额外脚本。Node.js 也用于播放器和音频变调测试，前端本身不需要构建。实时升降调的 Signalsmith Stretch / WASM 随源码提供，不需要额外安装、模型下载或运行时 CDN；版本和许可见 `karaoke/dependencies/pitch-shift.json`。
 
@@ -94,7 +140,7 @@ cp karaoke/dependencies/english-alignment.json karaoke/research/word-onset-2026-
 | 中日文歌曲中英文词组的复核（可选） | [SOFA English tgm_en_v100](https://github.com/spicytigermeat/LabelMakr/releases/download/tgm_en_v100/tgm_en_v100.zip) | 解压到 `karaoke/models/alignment/sofa/english/`，保留 `tgm_en_v100/` 子目录及其字典、G2P 文件 |
 | 粤语语言分类 | [SenseVoice Small int8](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2) | 解压后将 `model.int8.onnx`、`tokens.txt` 和 `LICENSE` 放到 `karaoke/models/alignment/sensevoice/`，校验值见 [sensevoice.json](karaoke/dependencies/sensevoice.json) |
 | Whisper 粗对齐 | stable-whisper 自动下载 | `karaoke/models/alignment/whisper/` |
-| 可选本地批量 ASR | `Systran/faster-whisper-large-v3`（完整 CTranslate2 模型） | `KARAOKE_WHISPER_MODEL` |
+| 默认本地批量 ASR | `Systran/faster-whisper-large-v3`（完整 CTranslate2 模型） | `karaoke/models/alignment/faster-whisper-large-v3/`，可用 `KARAOKE_WHISPER_MODEL` 覆盖 |
 | 合并字组及中日文提前句首的独立声学复核（可选） | [MMS_FA](https://dl.fbaipublicfiles.com/mms/torchaudio/ctc_alignment_mling_uroman/model.pt) | `karaoke/models/alignment/mms/model.pt` |
 | 中文残余字组的后备复核（可选） | [Qwen3 ForcedAligner 0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B/tree/c7cbfc2048c462b0d63a45797104fc9db3ad62b7) | `karaoke/models/alignment/qwen3-forced-aligner-0.6b/` |
 
@@ -113,13 +159,30 @@ MMS_FA 的校验值见 [mms-alignment.json](karaoke/dependencies/mms-alignment.j
 
 ## 5. 运行配置
 
-通过本机环境变量设置 `OPENAI_API_KEY`，凭据留在本机配置中。普通点歌优先使用已发表歌词；元数据不足时调用文本模型补充，默认 `gpt-5-mini`。严格音频验收另行使用 ASR，默认在线调用。
+ASR 与文本整理分别配置，互不隐式切换。普通点歌仍优先查询已发表歌词，本地 ASR 不关闭联网歌词检索。分离、声学对齐本来就是本地神经网络推理，仍需要原有权重；Codex CLI 仅整理来源元数据、选取已有歌词行，不负责听歌、生成歌词或编造字词时间。
 
-可选本地识别：安装 `karaoke/requirements-local-asr.txt`，下载上述完整模型目录，
-设置 `KARAOKE_ASR_BACKEND=local`、`KARAOKE_WHISPER_MODEL=/绝对路径/模型目录`。
-本地模式无需 API key；支持 CUDA 或 CPU，CUDA 需要 CTranslate2 对应的 CUDA 12 cuBLAS 和 cuDNN 9。
-模型固定版本为 `edaa852ec7e145841d8ffdb056a99866b5f0a478`，下载后保存文件 SHA-256。
-`KARAOKE_WHISPER_BATCH_SIZE` 默认 8；先在目标硬件验证批次对照和完整歌曲，再用于回归验收。
+| 功能 | 默认 | 可选后端 |
+| --- | --- | --- |
+| 音频识别／缺失锚点恢复 | `KARAOKE_ASR_BACKEND=local` | `api` 显式调用原 OpenAI 音频 API |
+| 歌名、署名与简介歌词行选择 | `KARAOKE_TEXT_BACKEND=codex` | `local`、`none`、`api` |
+
+**本地识别**：完整依赖已包含 `requirements-local-asr.txt`。下载上表的完整 CTranslate2 模型，固定 revision 为 `edaa852ec7e145841d8ffdb056a99866b5f0a478`，下载后保存 SHA-256。默认路径为 `karaoke/models/alignment/faster-whisper-large-v3`，可设置 `KARAOKE_WHISPER_MODEL` 覆盖；批次默认 1。支持 CUDA 或 CPU，CUDA 需要 CTranslate2 对应的 CUDA 12 cuBLAS 和 cuDNN 9。模型缺失不阻止空曲库启动，但实际识别会失败，不会转用付费 API。可在主环境中运行：
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 -c "from huggingface_hub import snapshot_download; snapshot_download('Systran/faster-whisper-large-v3', revision='edaa852ec7e145841d8ffdb056a99866b5f0a478', local_dir='karaoke/models/alignment/faster-whisper-large-v3')"
+```
+
+**Codex CLI（默认文本后端）**：安装支持 `exec --ignore-user-config --ephemeral --output-schema` 的新版 CLI（例如 `npm install -g @openai/codex`），执行 `codex login`，选择 ChatGPT 账号，再用 `codex login status` 确认登录。服务必须以同一 Windows 用户运行，并在 PATH 中找到 CLI；也可用 `KARAOKE_CODEX_COMMAND` 指定 `codex.exe` 或标准 npm `codex.cmd` 的路径。可通过 `KARAOKE_CODEX_MODEL` 选择账号可用模型，未设置时使用 CLI 默认模型。
+
+程序在独立临时目录使用只读、非交互、结构化输出模式，通过 stdin 传入元数据，验证返回 JSON；不加载个人 CLI 配置，关闭 shell/web search，强制 ChatGPT 登录且不向子进程传入 API key。账号登录、额度耗尽、超时或结构不合格会留下失败原因，由原有来源流程决定是否可继续，绝不自动退回 API。临时文件自动清理，不把登录凭据写入项目。元数据会发送到 Codex 服务，因此此模式不是完全离线。
+
+ChatGPT Pro 的 Codex 使用受订阅额度和可用性限制；API key 登录则单独按 API 计费，订阅不覆盖直接 OpenAI Audio/Chat API。实现依据 [OpenAI 官方认证说明](https://developers.openai.com/codex/auth)与[非交互模式说明](https://developers.openai.com/codex/noninteractive)，以账号实际额度为准。本地应用使用当前用户登录，不把登录凭据放进公开 CI。
+
+**本地文本服务**：设置 `KARAOKE_TEXT_BACKEND=local`、`KARAOKE_LOCAL_TEXT_MODEL=已安装模型名`，以及 `KARAOKE_LOCAL_TEXT_URL=http://127.0.0.1:11434/v1`（默认值）。服务需支持 OpenAI-compatible `/chat/completions` 和 `json_schema` 结构化输出，例如已启动并安装模型的本地服务。仅接受 loopback 地址，不使用 API key，也不经过系统代理；接口不兼容时明确失败。`KARAOKE_TEXT_BACKEND=none` 则完全禁用文本模型，继续使用来源元数据和既有歌词解析，信息不足时需提供歌名／歌手／歌词。
+
+**保留的付费兼容路径**：只有明确设置 `KARAOKE_ASR_BACKEND=api` 或 `KARAOKE_TEXT_BACKEND=api` 才使用相应 API，并需 `OPENAI_API_KEY`。文本 API 模型仍由 `KARAOKE_TEXT_MODEL` 指定，默认 `gpt-5-mini`。两项相互独立；只打开文本 API 不会打开音频 API。
+
+本地 ASR 模式没有等价的“演唱／对白”音频复核分类器；无法证实的缺口保留原覆盖检查及待复核／失败状态，不用纯文本模型冒充音频证据。已有起音精度、音频质量与全部产物校验不降低。
 
 ```sh
 export KARAOKE_SEPARATOR_PYTHON="$PWD/.venv-separator/bin/python"

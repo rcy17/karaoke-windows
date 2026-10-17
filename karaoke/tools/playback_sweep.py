@@ -1,6 +1,5 @@
 """One pass over a frozen corpus using the normal playback policy, without video."""
 import argparse
-import fcntl
 import hashlib
 import json
 import math
@@ -17,6 +16,7 @@ from typing import Any
 import httpx
 
 from karaoke.api import Store
+from karaoke.file_lock import lock_file
 from karaoke.stage_cache import digest
 from karaoke.tools.soak import ProbeSession, record_failure, run_probe, save, stamp, verify_outputs
 
@@ -157,7 +157,7 @@ def run_once(manifest, data_dir, report, prepared_dir, base, *, case_urls=(), co
     selected = [dict(c, title=original['title']) for c, original in zip(selection, frozen['cases'])
                 if not case_urls or c['url'] in case_urls]
     with manifest.with_suffix('.lock').open('a') as lock, httpx.Client(timeout=30) as client:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_file(lock, blocking=False)
         health = client.get(base+'/health').raise_for_status().json()
         version = health['pipeline_version']
         if not health.get('preparation_paused') or health.get('running_job'):

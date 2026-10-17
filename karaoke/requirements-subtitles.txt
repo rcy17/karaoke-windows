@@ -12,7 +12,9 @@ rangehttpserver==1.4.0
 pykakasi==2.3.0
 pycantonese==5.0.0
 sherpa-onnx==1.13.8
-pyopenjtalk==0.4.1
+pyopenjtalk==0.4.1; sys_platform != 'win32'
+# Compatible import/API, with prebuilt Windows wheels and pronunciation dictionary.
+pyopenjtalk-plus==0.4.1.post7; sys_platform == 'win32'
 num2words==0.5.14
 lightning==2.6.1
 textgrid==1.6.1

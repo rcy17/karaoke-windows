@@ -1,5 +1,10 @@
 """Public job inputs, safe provider errors and single-video platform URLs."""
-import fcntl
+if __package__:
+    from .file_lock import lock_file
+    from .file_ops import replace_file
+else:
+    from file_lock import lock_file
+    from file_ops import replace_file
 import json
 import math
 import os
@@ -45,11 +50,11 @@ def download_backoff(url, directory=None, *, until=0):
         return read()
     folder.mkdir(parents=True, exist_ok=True)
     with (folder/'youtube.retry.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock)
         deadline = max(read(), until)
         temporary = path.with_suffix('.tmp')
         temporary.write_text(json.dumps(deadline))
-        temporary.replace(path)
+        replace_file(temporary, path)
     return deadline
 
 

@@ -7,7 +7,6 @@ import logging
 import math
 import os
 import re
-import selectors
 import shutil
 import subprocess
 import sys
@@ -16,18 +15,22 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
-from io import BufferedReader
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
+
+from karaoke.file_ops import replace_file
+
+from .file_lock import lock_file, unlock_file
 
 ROOT = Path(__file__).resolve().parent
 # The research stages predate the package API and use sibling imports.
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from . import local_asr
+from . import local_asr, text_backend
 from .cache import can_restore_video
 from .job_schema import JobRequest, download_backoff, provider_error, retry_fields, song_language
+from .pipe_output import output_blocks
 from .song_sources import (
     independent_transcript_support,
     lyric_coverage,
@@ -45,7 +48,7 @@ def write_json(path, value):
     path = Path(path)
     temporary = path.with_suffix(path.suffix + '.tmp')
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
-    temporary.replace(path)
+    replace_file(temporary, path)
 
 
 def file_hash(path):
@@ -139,7 +142,7 @@ def create_poster(source, output, *, thumbnail=None, seconds=30):
                 'scale=960:540:force_original_aspect_ratio=decrease', '-q:v', '3', str(temporary)],
                 capture_output=True, timeout=15)
             if result.returncode == 0 and temporary.is_file() and temporary.stat().st_size:
-                temporary.replace(output)
+                replace_file(temporary, output)
                 return True
         except Exception:
             logging.getLogger(__name__).warning('Optional poster could not be created', exc_info=True)
@@ -420,7 +423,6 @@ class Pipeline:
         if not directory or lane is None:
             yield
             return
-        import fcntl
         folder = Path(directory)
         folder.mkdir(parents=True, exist_ok=True)
         stamp = time.time_ns()
@@ -430,16 +432,26 @@ class Pipeline:
             slots = [handles.enter_context((folder/(lane+('' if i == 0 else f'.{i}')+'.lock')).open('a'))
                      for i in range(capacity)]
             slot = None
-            fcntl.flock(registration, fcntl.LOCK_EX)
+            lock_file(registration)
             json.dump(dict(job=self.output.name, ready=stamp, url=self.request['url']), registration)
             registration.flush()
+
+            def unregister():
+                registration.close()
+                try:
+                    request.unlink(missing_ok=True)
+                except PermissionError:
+                    # Another Windows worker may briefly have the record open.
+                    # The released owner lock makes it stale on the next scan.
+                    pass
+
             try:
                 waiting = False
                 while True:
                     try:
                         for candidate in slots:
                             try:
-                                fcntl.flock(candidate, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                                lock_file(candidate, blocking=False)
                             except BlockingIOError:
                                 continue
                             slot = candidate
@@ -456,12 +468,13 @@ class Pipeline:
                             try:
                                 with path.open('r+') as owner:
                                     try:
-                                        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                                        lock_file(owner, blocking=False)
                                     except BlockingIOError:
                                         item = json.load(owner)
                                     else:
                                         # File locks die with their process; PID reuse
                                         # cannot leave an abandoned request blocking work.
+                                        owner.close()
                                         path.unlink(missing_ok=True)
                                         continue
                             except (OSError, ValueError):
@@ -471,7 +484,8 @@ class Pipeline:
                         limited = lane == 'download' and download_backoff(self.request['url'], folder) > time.time()
                         if not limited and (not candidates or min(candidates)[2] == request.name):
                             break
-                        fcntl.flock(slot, fcntl.LOCK_UN)
+                        unlock_file(slot)
+                        slot = None
                     except BlockingIOError:
                         pass
                     if not waiting:
@@ -481,12 +495,12 @@ class Pipeline:
                             self.publish_progress()
                         waiting = True
                     time.sleep(.05)
-                request.unlink(missing_ok=True)
+                unregister()
                 yield
             finally:
-                request.unlink(missing_ok=True)
+                unregister()
                 if slot is not None:
-                    fcntl.flock(slot, fcntl.LOCK_UN)
+                    unlock_file(slot)
 
     def run_subprocess(self, name, command, timeout=3600):
         self.phase(name, True)
@@ -494,27 +508,20 @@ class Pipeline:
         started = time.perf_counter()
         succeeded = False
         try:
-            with (self.output/f'{name}.log').open('wb') as log, selectors.DefaultSelector() as selector:
+            with (self.output/f'{name}.log').open('wb') as log:
                 with subprocess.Popen([str(a) for a in command], cwd=ROOT.parent,
                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                        env={**os.environ, 'PYTHONUNBUFFERED': '1'}) as result:
+                        env={**os.environ, 'PYTHONUNBUFFERED': '1', 'PYTHONUTF8': '1'}) as result:
                     assert result.stdout is not None
-                    stdout = cast(BufferedReader, result.stdout)
-                    selector.register(stdout, selectors.EVENT_READ)
                     pending = b''
                     try:
-                        while True:
-                            remaining = timeout-(time.perf_counter()-started)
-                            if remaining <= 0:
-                                raise subprocess.TimeoutExpired(command, timeout)
-                            if not selector.select(remaining):
-                                raise subprocess.TimeoutExpired(command, timeout)
-                            block = stdout.read1(65536)
+                        for block in output_blocks(result, command, timeout, started):
                             log.write(block)
                             log.flush()
                             lines = (pending+block).split(b'\n')
                             pending = lines.pop() if block else b''
                             for line in lines:
+                                line = line.rstrip(b'\r')
                                 if name == 'download' and line == b'KARAOKE_SOURCE_READY':
                                     self.source_metadata_ready()
                                 value = parse_progress(line.decode(errors='replace'))
@@ -703,7 +710,8 @@ class Pipeline:
                     cached = self.output/'prepared-lyrics.json'
                     keys = ('title', 'artist', 'language', 'lyrics')
                     overrides = {key:self.request.get(key) for key in keys}
-                    selection = dict(duration=duration, metadata_model=self.text_model)
+                    selection = dict(duration=duration, metadata_model=self.text_model,
+                                     text_backend=text_backend.configuration(self.text_model))
                     lyrics = None
                     if cached.is_file() and not self.request.get('force'):
                         try:
@@ -716,9 +724,8 @@ class Pipeline:
                         except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
                             write_json(self.output/'prepared-lyrics-cache-error.json', dict(reason=str(error)))
                     if lyrics is None:
-                        lyrics = (prepare_online_lyrics(self.request, metadata, duration, self.checkpoints,
-                                                        self.text_model, self.catalog_root)
-                                  if not local_asr.offline() or self.request.get('lyrics') else None)
+                        lyrics = prepare_online_lyrics(self.request, metadata, duration, self.checkpoints,
+                                                       self.text_model, self.catalog_root)
                         if lyrics is not None:
                             write_json(cached, dict(identity=prepared_lyrics_identity(self.request['url'], metadata),
                                                    request_overrides=overrides, selection=selection, lyrics=lyrics))
@@ -1207,7 +1214,7 @@ class Pipeline:
     def execute(self):
         started = time.perf_counter()
         if self.strict_audio and not local_asr.offline() and not os.getenv('OPENAI_API_KEY'):
-            raise StageFailure('configuration', '请在启动服务前设置 OPENAI_API_KEY，用于 ASR 和歌词整理')
+            raise StageFailure('configuration', '已选择 API 音频识别；请设置 OPENAI_API_KEY，或改用 KARAOKE_ASR_BACKEND=local')
         if not shutil.which(self.separator_python):
             raise StageFailure('configuration', '找不到分离环境的 Python，请设置 KARAOKE_SEPARATOR_PYTHON')
         import soundfile as sf

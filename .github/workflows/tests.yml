@@ -13,6 +13,73 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows:
+    name: Windows / native Python and JavaScript
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: "1"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install native dependencies
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.11.0 torchaudio==2.11.0
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pip install -r requirements-dev.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pip check
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm ci
+      - name: Install test media tools
+        run: |
+          Invoke-WebRequest https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.2-essentials_build.zip -OutFile "$env:RUNNER_TEMP/ffmpeg.zip"
+          Invoke-WebRequest https://www.rarewares.org/files/mp3/lame3.100-libsndfile-64.zip -OutFile "$env:RUNNER_TEMP/lame.zip"
+          if ((Get-FileHash "$env:RUNNER_TEMP/ffmpeg.zip").Hash -ne '60F467265B1E312373DBCD92200C2618A74850F98D3D078E94296BB3FA2047BA') { throw 'FFmpeg archive changed' }
+          if ((Get-FileHash "$env:RUNNER_TEMP/lame.zip").Hash -ne '89CF8A735D13592282E849D64B974F1E4605DF28BC4BECEAAC911178B1A00C3F') { throw 'LAME archive changed' }
+          Expand-Archive "$env:RUNNER_TEMP/ffmpeg.zip" "$env:RUNNER_TEMP/ffmpeg"
+          Expand-Archive "$env:RUNNER_TEMP/lame.zip" "$env:RUNNER_TEMP/lame"
+          "$env:RUNNER_TEMP/ffmpeg/ffmpeg-9.0.2-essentials_build/bin" >> $env:GITHUB_PATH
+          "$env:RUNNER_TEMP/lame" >> $env:GITHUB_PATH
+          Invoke-WebRequest https://raw.githubusercontent.com/notofonts/noto-cjk/main/Serif/OTC/NotoSerifCJK-Regular.ttc -OutFile "$env:RUNNER_TEMP/NotoSerifCJK-Regular.ttc"
+          "KARAOKE_FONT_FILE=$env:RUNNER_TEMP/NotoSerifCJK-Regular.ttc" >> $env:GITHUB_ENV
+      - name: Check out the pinned pronunciation dictionary
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: qiuqiao/SOFA
+          ref: 9549c6a86d16019c817eefe4bb8183405da524cc
+          path: karaoke/research/subtitles-2026-09-18/sofa
+          persist-credentials: false
+      - name: Check all source
+        run: |
+          ruff check .
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ty check --python (Get-Command python).Source
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run lint
+      - name: Run Python tests including empty-library startup
+        env:
+          PYTHONPATH: karaoke
+        run: python -m pytest -q karaoke/test_api.py karaoke/test_room.py karaoke/test_algorithms.py --junitxml=test-results/windows.xml --basetemp="${{ runner.temp }}/karaoke-tests"
+      - name: Run JavaScript tests
+        run: node --test karaoke/test_player.mjs karaoke/test_pitch.mjs karaoke/test_search.mjs
+      - name: Save Windows test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-test-results
+          path: test-results/
+          retention-days: 14
+
   lint:
     name: Python / Ruff
     runs-on: ubuntu-24.04

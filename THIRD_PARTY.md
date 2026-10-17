@@ -24,6 +24,9 @@
 | [uroman](https://pypi.org/project/uroman/1.3.1.1/) | 1.3.1.1，MIT 类许可附额外项目署名要求；用于多语言声学复核的转写。该版本包分类写 Apache，实际条款以附带的许可文件为准，见下方。 |
 | [PyCantonese](https://github.com/jacksonllee/pycantonese) | 5.0.0，Python 代码 MIT；粤拼函数使用 HKCanCor 与 rime-cantonese 数据，二者为 CC-BY-4.0。包内另有 CantoMap（GPLv3）、Common Voice（MPL-2.0）、CTCPC（CC0）数据；制作整包时保留各数据子目录的许可。 |
 | [pyopenjtalk](https://github.com/r9y9/pyopenjtalk) | 0.4.1，Python 封装 MIT；本项目使用文本前端。包内 Mei voice 单独采用 CC-BY-3.0。 |
+| [pyopenjtalk-plus](https://github.com/tsukumijima/pyopenjtalk-plus) | Windows 使用 0.4.1.post7 的预编译 wheel，仍以 `pyopenjtalk` 导入；上游 Python 封装 MIT，OpenJTalk、字典、Mei voice 等所附组件保留各自许可与署名。只替换 Windows 安装依赖，其他系统保留上项。 |
+
+本 Windows 适配分支源自 [Trinkle23897/karaoke](https://github.com/Trinkle23897/karaoke)，保留原作者 Jiayi Weng and contributors 的 MIT 版权通知、原项目说明与第三方许可。Codex CLI 由用户另行安装并登录；使用 ChatGPT 订阅认证仍受 OpenAI 服务条款及订阅额度约束。本地文本模型由用户另行选择和下载，许可依相应模型发布者规定，不随本仓库分发权重或凭据。
 
 GPL 允许商业使用；分发受其覆盖的程序组合时，按适用条件提供源码、通知和许可。组合程序与独立作品集合的区别见 [GNU FAQ](https://www.gnu.org/licenses/gpl-faq.en.html#IfInterpreterIsGPL)，完整条款见 [GPL v3](licenses/GPL-3.0.txt)。
 

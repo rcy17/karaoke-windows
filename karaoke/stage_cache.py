@@ -1,4 +1,8 @@
 """Content-checked checkpoints inside the existing, budgeted job directory."""
+if __package__:
+    from .file_ops import replace_file
+else:
+    from file_ops import replace_file
 import hashlib
 import json
 import shutil
@@ -30,7 +34,7 @@ class StageCache:
                 if file.is_symlink():
                     raise ValueError(f'Checkpoint cannot follow a symlink: {file}')
                 if file.is_file():
-                    key = str(file.resolve().relative_to(self.root)) if file.resolve().is_relative_to(self.root) else str(file.resolve())
+                    key = file.resolve().relative_to(self.root).as_posix() if file.resolve().is_relative_to(self.root) else str(file.resolve())
                     records[key] = dict(bytes=file.stat().st_size, sha256=digest(file))
         if not records:
             raise ValueError('Checkpoint has no files')
@@ -66,7 +70,7 @@ class StageCache:
                 old['outputs'] = current
                 temporary = checkpoint.with_suffix('.tmp')
                 temporary.write_text(json.dumps(old, ensure_ascii=False, indent=2)+'\n')
-                temporary.replace(checkpoint)
+                replace_file(temporary, checkpoint)
             self.reused.append(name)
             yield True
             return
@@ -83,7 +87,7 @@ class StageCache:
                       seconds=round(time.perf_counter()-started, 3))
         temporary = checkpoint.with_suffix('.tmp')
         temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2)+'\n')
-        temporary.replace(checkpoint)
+        replace_file(temporary, checkpoint)
 
 
 def retained_files(folder):
@@ -93,7 +97,7 @@ def retained_files(folder):
         try:
             outputs = json.loads(checkpoint.read_text())['outputs']
             if isinstance(outputs, dict):
-                retained.update(key for key in outputs if not Path(key).is_absolute() and '..' not in Path(key).parts)
+                retained.update(Path(key).as_posix() for key in outputs if not Path(key).is_absolute() and '..' not in Path(key).parts)
                 retained.add(checkpoint.relative_to(folder).as_posix())
         except (OSError, ValueError, KeyError, TypeError):
             continue

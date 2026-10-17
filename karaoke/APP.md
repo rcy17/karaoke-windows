@@ -112,6 +112,8 @@
 KARAOKE_HOST=0.0.0.0 .venv/bin/python -m karaoke.api
 ```
 
+Windows PowerShell 对应 `$env:KARAOKE_HOST = '0.0.0.0'`，再执行 `.\.venv\Scripts\python.exe -X utf8 -m karaoke.api`。默认仍只监听本机；完整安装、字体及本地 ASR / Codex CLI 配置见 [SETUP](../SETUP.md)。
+
 手机访问 `http://电脑局域网IP:8746/`。这是单房间应用，未实现账号和独立房间，局域网中可访问该地址的人都能操作同一歌单。
 
 ## 状态与恢复

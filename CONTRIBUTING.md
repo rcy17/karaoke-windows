@@ -28,6 +28,25 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=karaoke .venv/bin/python -m pytest -
 npm test
 ```
 
+Windows PowerShell（完成 SETUP 中的依赖与发音字典准备后）：
+
+```powershell
+$env:PYTHONUTF8 = '1'
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+npm ci
+.\.venv\Scripts\ruff.exe check .
+.\.venv\Scripts\ty.exe check --python .venv/Scripts/python.exe
+npm run lint
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
+$env:PYTHONPATH = 'karaoke'
+# 使用已安装、覆盖测试文字的完整 CJK 字体文件。
+$env:KARAOKE_FONT_FILE = 'C:\路径\NotoSerifCJK-Regular.ttc'
+.\.venv\Scripts\python.exe -m pytest -q karaoke/test_api.py karaoke/test_room.py karaoke/test_algorithms.py
+node --test karaoke/test_player.mjs karaoke/test_pitch.mjs karaoke/test_search.mjs
+```
+
+旧有 API 行为测试通过测试夹具显式选择 `api` 后端并使用模拟响应；新增回归独立检查生产默认值、本地 ASR 与联网歌词互不阻断、Codex 订阅认证、缓存隔离和失败后不调用付费接口。不要在 CI 中放入个人 Codex 登录凭据。真实 CLI 和本地模型推理需另行实测，不把模拟响应测试称为模型质量验收。
+
 测试需要主环境依赖和 SOFA / pyopenjtalk 发音字典，不需要歌曲库、模型权重或 API key。CI 运行同一套 lint、类型检查、行为测试及空数据启动检查。
 
 ## 文档写法

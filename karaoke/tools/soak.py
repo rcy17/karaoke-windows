@@ -1,13 +1,11 @@
 """Reproducible whole-song acceptance runs through the room's song queue."""
 import argparse
-import fcntl
 import gzip
 import hashlib
 import json
 import os
 import random
 import re
-import signal
 import sqlite3
 import subprocess
 import sys
@@ -21,8 +19,11 @@ from typing import Any
 
 import httpx
 
+from karaoke.file_lock import lock_file
+from karaoke.file_ops import replace_file
 from karaoke.job_schema import playback_stems, provider_error, retry_fields, video_url
 from karaoke.local_asr import offline
+from karaoke.process_tree import signal_tree, worker_command
 
 REQUIRED = {'mv', 'instrumental', 'backing_vocals', 'lead_vocals', 'subtitles',
             'instrumental_preview', 'backing_vocals_preview', 'lead_vocals_preview'}
@@ -43,7 +44,7 @@ def stamp():
 def save(path, value):
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
-    temporary.replace(path)
+    replace_file(temporary, path)
 
 
 def select_cases(pool, quotas, seed):
@@ -323,7 +324,7 @@ class ProbeSession:
     def __enter__(self):
         self.lock = (self.root/'focused-probe.lock').open('a')
         try:
-            fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(self.lock, blocking=False)
         except BaseException:
             self.lock.close()
             raise
@@ -393,7 +394,7 @@ def run_probe(client, base, folder, command, *, resume_preparation=None, session
         session.check(folder)
         (folder/'error.json').unlink(missing_ok=True)
         with (folder/'probe.log').open('ab') as log, ThreadPoolExecutor(max_workers=1) as reader:
-            process = subprocess.Popen(command, cwd=Path(__file__).resolve().parents[2],
+            process = subprocess.Popen(worker_command(command), cwd=Path(__file__).resolve().parents[2],
                 stdout=subprocess.PIPE if store is not None else log,
                 stderr=subprocess.STDOUT, start_new_session=True,
                 env={**os.environ, 'KARAOKE_EVENTS_STDOUT': '1',
@@ -434,7 +435,8 @@ def run_probe(client, base, folder, command, *, resume_preparation=None, session
                 raise
             finally:
                 try:
-                    os.killpg(process.pid, signal.SIGTERM)
+                    if os.name != 'nt' or process.poll() is None:
+                        signal_tree(process.pid)
                 except ProcessLookupError:
                     pass
                 try:
@@ -445,7 +447,8 @@ def run_probe(client, base, folder, command, *, resume_preparation=None, session
                     # The parent may exit before a descendant closes stdout.
                     # Release the entire group before joining the output reader.
                     try:
-                        os.killpg(process.pid, signal.SIGKILL)
+                        if os.name != 'nt' or process.poll() is None:
+                            signal_tree(process.pid, force=True)
                     except ProcessLookupError:
                         pass
                 process.wait()
@@ -492,7 +495,7 @@ def run_audio(path, data_dir, base, *, case_url=None, defer_urls=(), keep_going=
     deferred = {video_url(url) for url in defer_urls}
     store = Store(data_dir)
     with path.with_suffix('.lock').open('a') as lock, httpx.Client(timeout=30) as client:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_file(lock, blocking=False)
         while True:
             state = json.loads(path.read_text())
             selection = [dict(url=c['url'], language=c['language']) for c in state['cases']]
@@ -651,7 +654,7 @@ def record_failure(attempt, job, folder):
             with path.open('rb') as stream:
                 stream.seek(0, 2)
                 stream.seek(max(0, stream.tell()-16384))
-                diagnostics[path.name] = stream.read().decode(errors='replace')
+                diagnostics[path.name] = stream.read().decode(errors='replace').replace('\r\n', '\n')
         except FileNotFoundError:  # Cache eviction may race a completed job's inspection.
             continue
     names = ('worker.log', 'probe.log', 'download.log', 'transcribe.log', error['code'].removesuffix('_failed')+'.log')
@@ -678,10 +681,10 @@ def record_failure(attempt, job, folder):
                 # Alignment retries contain repeated contexts which compress
                 # well. Preserve them before releasing the job's cache guard.
                 if path.stat().st_size <= 16*1024**2:
-                    diagnostics[str(path.relative_to(folder))] = json.loads(path.read_text())
+                    diagnostics[path.relative_to(folder).as_posix()] = json.loads(path.read_text())
                 else:
                     diagnostics.setdefault('omitted_diagnostics', []).append(dict(
-                        path=str(path.relative_to(folder)), bytes=path.stat().st_size, reason='size_limit'))
+                        path=path.relative_to(folder).as_posix(), bytes=path.stat().st_size, reason='size_limit'))
             except (ValueError, OSError):
                 continue
     if diagnostics:
@@ -750,7 +753,7 @@ def release_finished_entries(client, base, state):
 def run(path, data_dir, base):
     # Only this controller writes the manifest; it submits to the existing worker.
     with path.with_suffix('.lock').open('w') as lock, httpx.Client(timeout=40) as client:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_file(lock, blocking=False)
         while True:
             if path.with_suffix('.pause').exists():
                 print('Paused by controller file', flush=True)

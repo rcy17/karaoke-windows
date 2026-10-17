@@ -1,6 +1,5 @@
 """Local persistent jobs API. Run one server worker for one GPU queue."""
 import asyncio
-import fcntl
 import hashlib
 import io
 import json
@@ -9,7 +8,6 @@ import math
 import mimetypes
 import os
 import re
-import signal
 import sqlite3
 import sys
 import threading
@@ -29,10 +27,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from karaoke.file_ops import replace_file
+
 from .cache import GIB, CacheFull, SongCache, can_restore_video
+from .file_lock import lock_file
 from .job_schema import JobRequest, download_backoff, playback_stems, retry_after_seconds
 from .job_schema import retry_fields as source_retry_fields
 from .lyric_availability import LyricAvailability
+from .process_tree import terminate_tree, worker_command
 from .room import AddSong, Room, RoomCommand, Updates, artifact_url
 from .video_search import SearchCursorExpired, VideoSearch
 
@@ -389,7 +391,7 @@ class Worker:
         folder.mkdir(exist_ok=True)
         temporary = folder/(str(uuid4())+'.tmp')
         temporary.write_text(json.dumps(job_ids))
-        temporary.replace(folder/'priority.json')
+        replace_file(temporary, folder/'priority.json')
         pending = []
         while not self.queue.empty():
             pending.append(self.queue.get_nowait())
@@ -537,22 +539,7 @@ class Worker:
 
     async def terminate(self, process):
         if process:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                await asyncio.wait_for(process.wait(), 5)
-            except TimeoutError:
-                pass
-            finally:
-                # The parent can exit while a descendant ignores SIGTERM or
-                # closes stdout. Never let that orphan keep writing the cache.
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            await process.wait()
+            await terminate_tree(process)
 
     async def consume(self, job_id):
         job = self.store.read(job_id)
@@ -578,9 +565,9 @@ class Worker:
                 if not self.command:
                     command.append('--restore-video')
             with (folder/'worker.log').open('ab') as log:
-                spawn = asyncio.create_task(asyncio.create_subprocess_exec(*command, cwd=ROOT.parent,
+                spawn = asyncio.create_task(asyncio.create_subprocess_exec(*worker_command(command), cwd=ROOT.parent,
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                    env={**os.environ, 'KARAOKE_EVENTS_STDOUT': '1',
+                    env={**os.environ, 'KARAOKE_EVENTS_STDOUT': '1', 'PYTHONUTF8': '1',
                          'KARAOKE_STAGE_LOCK_DIR': str(self.store.root/'stage-locks')}, start_new_session=True))
                 try:
                     process = await asyncio.shield(spawn)
@@ -699,10 +686,12 @@ def create_app(data_dir=None, *, worker_command=None, version=None, cache_limit_
     if version is None:
         from .local_asr import configuration
         from .pipeline import pipeline_fingerprint
+        from .text_backend import configuration as text_configuration
         settings = {key: os.getenv(key) for key in ('KARAOKE_TEXT_MODEL', 'KARAOKE_ASR_FALLBACK_MODEL', 'KARAOKE_DEVICE',
             'KARAOKE_DISABLE_LYRIC_CATALOG', 'KARAOKE_FONT_FILE', 'KARAOKE_SEPARATOR_PYTHON',
             'KARAOKE_SEPARATION_BATCH_SIZE', 'KARAOKE_COMPUTE_CONCURRENCY')}
         settings['asr'] = configuration()
+        settings['text_backend'] = text_configuration(os.getenv('KARAOKE_TEXT_MODEL', 'gpt-5-mini'))
         version = hashlib.sha256((pipeline_fingerprint()+json.dumps(settings, sort_keys=True)).encode()).hexdigest()
     if worker_concurrency == 'env':
         configured = os.getenv('KARAOKE_PREPARATION_CONCURRENCY', '1').strip().lower()
@@ -721,7 +710,7 @@ def create_app(data_dir=None, *, worker_command=None, version=None, cache_limit_
     async def lifespan(app):
         with (store.root/'worker.lock').open('w') as lock:
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file(lock, blocking=False)
             except BlockingIOError as error:
                 raise RuntimeError('此任务目录已有服务在运行。每个 GPU 队列只运行一个 API worker。') from error
             await worker.start()

@@ -67,7 +67,9 @@ def japanese_mora_phones(mora):
     # This is an already selected pronunciation, not a written particle.
     # Katakana keeps isolated は/へ from being reinterpreted as wa/e.
     katakana = ''.join(chr(ord(c)+0x60) if 'ぁ' <= c <= 'ゖ' else c for c in mora)
-    return tuple(pyopenjtalk.g2p(katakana).split())
+    phonemes = pyopenjtalk.g2p(katakana)
+    assert isinstance(phonemes, str)
+    return tuple(phonemes.split())
 
 
 def japanese_phone_groups(kana, previous_vowel=None):

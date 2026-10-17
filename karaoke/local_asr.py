@@ -8,7 +8,7 @@ import tempfile
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import asdict
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 if __package__:
@@ -33,7 +33,7 @@ def whisper_language(value):
 
 
 def offline():
-    backend = os.getenv('KARAOKE_ASR_BACKEND', 'api')
+    backend = os.getenv('KARAOKE_ASR_BACKEND', 'local')
     if backend not in ('api', 'local'):
         raise ValueError('KARAOKE_ASR_BACKEND must be api or local')
     return backend == 'local'
@@ -44,13 +44,19 @@ def configuration():
         return dict(backend='api')
     model = Path(os.getenv('KARAOKE_WHISPER_MODEL',
         str(Path(__file__).resolve().parent/'models/alignment/faster-whisper-large-v3')))
-    batch = int(os.getenv('KARAOKE_WHISPER_BATCH_SIZE', '8'))
+    batch = int(os.getenv('KARAOKE_WHISPER_BATCH_SIZE', '1'))
     if not 1 <= batch <= 32:
         raise ValueError('KARAOKE_WHISPER_BATCH_SIZE must be between 1 and 32')
     files = [model/name for name in ('config.json', 'model.bin', 'tokenizer.json', 'preprocessor_config.json')]
+    packages = {}
+    for name in ('faster-whisper', 'ctranslate2'):
+        try:
+            packages[name] = version(name)
+        except PackageNotFoundError:
+            packages[name] = None
     return dict(backend='local', model=str(model), batch_size=batch, compute_type='float32',
-        model_files={p.name: [p.stat().st_size, p.stat().st_mtime_ns] for p in files},
-        packages={name: version(name) for name in ('faster-whisper', 'ctranslate2')})
+        model_files={p.name: [p.stat().st_size, p.stat().st_mtime_ns] if p.is_file() else None for p in files},
+        packages=packages)
 
 
 def offset_segments(segments, offset):

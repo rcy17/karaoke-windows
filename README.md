@@ -1,5 +1,7 @@
 # 退学 KTV
 
+本仓库是 [Trinkle23897/karaoke](https://github.com/Trinkle23897/karaoke) 的 Windows 适配分支。保留原项目的点歌、分离、歌词对齐、字幕与播放设计，补充 Windows 原生运行支持，默认采用本地 ASR，并支持通过已登录 ChatGPT 的 Codex CLI 或本地文本模型整理元数据。原作者版权及 [MIT License](LICENSE) 保持不变；下面继续保留原项目功能、使用方式和历史实测说明。
+
 把 YouTube 视频，实时变成可以唱的卡拉 OK：网页点歌、后台预处理、共享歌单和自动播放下一首。
 
 新歌在点歌后自动开始准备，完成音轨分离、字幕和 MV 生成后即可开唱；处理耗时见下方[实测参考](#处理一首歌要多久)。
@@ -67,9 +69,10 @@
 如果你已经在用 Claude Code（CC）、Codex 或其他编程助手，可以直接把下面这段发给它：
 
 ```text
-请帮我在本机安装并运行 https://github.com/Trinkle23897/karaoke 。
+请帮我在本机安装并运行 https://github.com/rcy17/karaoke-windows 。
 按 AGENTS.md 和 SETUP.md 检查硬件，为本机安装独立环境、依赖和模型。
-需要 API key 或来源平台登录时，指导我完成本机配置。
+优先配置本地模型和使用 ChatGPT 登录的 Codex CLI；不要自动启用付费 API。
+需要来源平台登录或模型资源时，指导我完成本机配置。
 安装后通过正常点歌流程处理一首完整歌曲，例如周杰伦《稻香》。
 等原任务 completed、待唱项可播放，核对音轨、字幕、完整视频和文件哈希，
 再用静音浏览器预览检查加载、定位、字幕和主唱开关；遇到问题继续排查。
@@ -84,16 +87,28 @@
 下面是 macOS / Linux 的最小启动方式，需要 Python 3.12；已有仓库时直接进入仓库目录：
 
 ```sh
-git clone https://github.com/Trinkle23897/karaoke.git
-cd karaoke
+git clone https://github.com/rcy17/karaoke-windows.git
+cd karaoke-windows
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -r karaoke/requirements-api.txt
 .venv/bin/python -m karaoke.api
 ```
 
+Windows 10/11 x64 使用 PowerShell（Python 3.12）：
+
+```powershell
+git clone https://github.com/rcy17/karaoke-windows.git
+cd karaoke-windows
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -X utf8 -m pip install -r karaoke/requirements-api.txt
+.\.venv\Scripts\python.exe -X utf8 -m karaoke.api
+```
+
+Windows 全部处理依赖、独立分离环境、字体和检查命令见 [Windows 安装步骤](SETUP.md#windows-powershell)。`-X utf8` 用于读写中文歌词和 JSON；子任务同样使用 UTF-8。
+
 打开 <http://127.0.0.1:8746/>，接口文档在 <http://127.0.0.1:8746/docs>。前端不需要构建。
 
-仓库不包含歌曲数据，初次启动曲库为空。上面的步骤可以启动界面和队列；真正处理新歌还需要 [安装说明](SETUP.md) 中的 FFmpeg、Node.js、推理依赖和模型权重。在线识别／元数据整理需要 `OPENAI_API_KEY`；也可配置本地识别模式。
+仓库不包含歌曲数据，初次启动曲库为空。上面的步骤可以启动界面和队列；真正处理新歌还需要 [安装说明](SETUP.md) 中的 FFmpeg、Node.js、推理依赖和模型权重。默认本地识别＋Codex CLI 文本整理不需要 `OPENAI_API_KEY`；也可选择纯本地文本服务或禁用文本模型。Codex 需用 ChatGPT 账号登录，消耗账号订阅额度，受相应限额约束；不代表无限调用。付费 API 仅在显式选择 `api` 后使用，失败不会自动切换到 API。配置和限制见 [运行配置](SETUP.md#5-运行配置)。
 
 完整环境准备好后，按[首歌步骤](SETUP.md#6-准备第一首歌)处理一首歌，例如《稻香》。电脑和手机都可以用「有歌词优先」挑选版本。歌曲完成后会出现在曲库，打开播放页即可开唱。更多操作见[使用说明](karaoke/APP.md)；在启动服务的终端按 `Ctrl+C` 可以停止服务。
 
@@ -193,7 +208,7 @@ karaoke/
 
 ## 验证
 
-[GitHub Actions](https://github.com/Trinkle23897/karaoke/actions/workflows/tests.yml) 在每次 push 和 PR 时运行 Ruff、ty、ESLint、全部 Python 与 JavaScript 行为测试，并检查空数据目录启动。测试报告保留 14 天，也可从 Actions 页面手动运行。开发工具安装与检查命令见[贡献指南](CONTRIBUTING.md#修改与验证)。
+[GitHub Actions](https://github.com/rcy17/karaoke-windows/actions/workflows/tests.yml) 在每次 push 和 PR 时运行 Ruff、ty、ESLint、全部 Python 与 JavaScript 行为测试，并检查空数据目录启动；本分支新增 Windows 原生测试，保留原 Linux 检查。测试报告保留 14 天，也可从 Actions 页面手动运行。开发工具安装与检查命令见[贡献指南](CONTRIBUTING.md#修改与验证)。
 
 准备完整 Python 环境并按 [安装说明](SETUP.md) 拉取 SOFA 源码后：
 

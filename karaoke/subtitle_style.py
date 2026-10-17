@@ -260,7 +260,7 @@ def system_font(name):
     if path.exists():
         return path
     # macOS stores some Japanese font filenames in decomposed Unicode.
-    for candidate in path.parent.iterdir():
+    for candidate in path.parent.iterdir() if path.parent.is_dir() else ():
         if unicodedata.normalize('NFC', candidate.name) == path.name:
             return candidate
     raise FileNotFoundError(path)
@@ -298,6 +298,8 @@ def resolve_font(text, style=DEFAULT_STYLE, language='auto', font_file=None):
     # Formatting controls (e.g. BOM / zero-width joiner) have no visible glyph.
     # Keep the source string and its timing indices intact.
     required = {ord(c) for c in text if not c.isspace() and unicodedata.category(c) != 'Cf'}
+    if any(0xfdd0 <= c <= 0xfdef or c & 0xffff in (0xfffe, 0xffff) for c in required):
+        raise ValueError('No installed font covers Unicode noncharacters in subtitle text')
     candidates = [(Path(font_file), 0)] if font_file else []
     if not font_file:
         try:

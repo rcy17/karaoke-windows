@@ -13,6 +13,8 @@
 .venv/bin/python -m karaoke.api
 ```
 
+Windows PowerShell 使用 `.\.venv\Scripts\python.exe -X utf8 -m karaoke.api`；安装与完整依赖见 [Windows 步骤](../SETUP.md#windows-powershell)。同一数据目录的服务锁、计算工位锁及子任务取消均支持 Windows；Windows worker 通过 Job Object 约束整个子进程树，POSIX 保留进程组清理。
+
 默认监听 `127.0.0.1:8746`。网页点歌台：<http://127.0.0.1:8746/>。交互文档：<http://127.0.0.1:8746/docs>。
 API 的依赖文件只安装服务依赖。新检出请按[安装说明](../SETUP.md)准备模型、音频环境和 FFmpeg；模型权重和歌曲数据不在仓库中。
 
@@ -380,12 +382,12 @@ MP3 试听使用 LAME 命令行写入完整的尾部填充信息，避免某些�
 
 `KARAOKE_ASR_BACKEND=local` 使用本地 faster-whisper / CTranslate2 的 Whisper large-v3，
 模型目录由 `KARAOKE_WHISPER_MODEL` 指定，必须已经下载完整；推理不自动下载模型。
-`KARAOKE_WHISPER_BATCH_SIZE` 控制同首歌曲最多并行解码多少个 30 秒窗口（默认 8，范围 1–32）。
+`KARAOKE_WHISPER_BATCH_SIZE` 控制同首歌曲最多并行解码多少个 30 秒窗口（默认 1，范围 1–32）。本地 ASR 现在是默认值；只有显式设置 `KARAOKE_ASR_BACKEND=api` 才调用原音频 API。
 包括最后不足 30 秒的片段，覆盖整首音频；不使用可能删掉弱歌声的语音活动过滤。
 采用 float32 计算、beam size 5 和固定 temperature 0。自动语言识别从录音中部三个窗口投票。
 批次大小、推理库版本和模型文件版本均参与流水线与检查点指纹。
 
-严格 `--audio-only` 的本地模式不请求远程转录、文本整理或音频分类接口，也不在线查找歌词／字幕。普通点歌仍需已有可信歌词或访问已发表的歌词来源。
+严格 `--audio-only` 的本地 ASR 模式不请求远程转录或音频分类接口，也不在线查找歌词／字幕；文本元数据整理单独由 `KARAOKE_TEXT_BACKEND` 控制。完全本地处理应选 `local` 或 `none` 文本后端，并预先准备歌词和模型。普通点歌仍会访问已发表的歌词来源。
 无声警告的异常检测包含正好挤在片段结束点的零时长词，避免这些词漏过恢复检查；不把下一句的正常词算入前句。
 若整句及其前后 250 ms 的有效音频均为数字零，句内完全匹配的词即使挤到文件结束之外，也可随这句一起剔除，并记录其静音父句。没有明确父句、归属冲突、负时间或附近仍有微弱声音时，继续保留异常并走恢复流程，不按音量阈值删词。
 保留用户提供的歌词和已下载的同源字幕；否则从本地转录逐字保留文本，仍需通过原有完整性和声学对齐校验。
@@ -402,9 +404,17 @@ ASR 固定宽度断行若留下孤立的单字或单词，会在同一短句内�
 
 | 环境变量 | 说明 |
 |---|---|
-| `OPENAI_API_KEY` | 在线 ASR 及需要模型补充的元数据查询使用；已发表歌词检索本身不需要 |
-| `KARAOKE_TEXT_MODEL` | 默认 `gpt-5-mini`；仅整理歌曲元数据，不改写歌词 |
-| `KARAOKE_ASR_FALLBACK_MODEL` | 默认 `gpt-4o-transcribe`；识别文本或时间异常时恢复整首文本 |
+| `OPENAI_API_KEY` | 仅在显式选择对应 `api` 后端时使用；不属于 ChatGPT 订阅额度。默认本地 ASR / Codex 路径不使用此 key |
+| `KARAOKE_ASR_BACKEND` | 默认 `local`；`api` 显式启用付费音频识别及音频复核。本地模式仍允许查询已发表歌词 |
+| `KARAOKE_WHISPER_MODEL` | 本地 CTranslate2 完整模型目录，默认 `karaoke/models/alignment/faster-whisper-large-v3` |
+| `KARAOKE_WHISPER_BATCH_SIZE` | 默认 `1`，范围 `1–32` |
+| `KARAOKE_TEXT_BACKEND` | 默认 `codex`；还可选 `local`（本地兼容服务）、`none`（禁用文本模型）、`api`（原付费接口）。失败不自动切换后端 |
+| `KARAOKE_CODEX_COMMAND` | CLI 可执行文件或标准 npm shim 路径，默认在 PATH 查找 `codex`；需提前用同一系统用户执行 `codex login`，使用 ChatGPT 登录 |
+| `KARAOKE_CODEX_MODEL` | 可选，须为账号可用模型；留空采用 CLI 默认值，不继承个人配置文件 |
+| `KARAOKE_LOCAL_TEXT_URL` | 默认 `http://127.0.0.1:11434/v1`；只接受 loopback，服务须支持 `/chat/completions` 的 JSON Schema 输出 |
+| `KARAOKE_LOCAL_TEXT_MODEL` | `local` 文本后端必填，指定已安装的模型 |
+| `KARAOKE_TEXT_MODEL` | 仅 `api` 文本后端使用，默认 `gpt-5-mini`；仅整理歌曲元数据，不改写歌词 |
+| `KARAOKE_ASR_FALLBACK_MODEL` | 仅 `api` 音频后端使用，默认 `gpt-4o-transcribe`；识别文本或时间异常时恢复整首文本 |
 | `KARAOKE_DATA_DIR` | 默认 `karaoke/service-data`，保存 SQLite 任务状态和每个任务的文件 |
 | `KARAOKE_CACHE_MAX_GIB` | 初次创建缓存设置时的容量上限，默认 `10` GiB；之后以页面保存的值为准 |
 | `KARAOKE_PREPARATION_CONCURRENCY` | 在途歌曲数上限，正整数（默认 `1`）；`none` 取消整首任务数量限制，仅由各阶段互斥锁和共享缓存预算约束 |
@@ -416,8 +426,8 @@ ASR 固定宽度断行若留下孤立的单字或单词，会在同一短句内�
 | `KARAOKE_SEPARATION_BATCH_SIZE` | 分离窗口批量大小，默认 `1`；按显存实测选择 |
 | `KARAOKE_REQUIRE_CACHED_SOURCE` | `1` 时只接受同源且哈希完整的媒体缓存，不重新下载媒体 |
 | `KARAOKE_MAX_DURATION_SECONDS` | 默认 `900` |
-| `KARAOKE_COOKIES_FILE` | 可选的 yt-dlp cookies 文件路径；未指定时读取数据目录的 `private/youtube-cookies.txt`。每次下载检查文件，存在则使用，缺失则默认下载；登录失败不会自动退回匿名重试。导出浏览器 cookies 需用户授权，服务本身不读取浏览器；私有目录权限 0700、文件 0600，不提交或上传 |
-| `KARAOKE_FONT_FILE` | 可选的完整字体路径；Linux 可使用覆盖对应语言的 Noto Serif CJK 字体 |
+| `KARAOKE_COOKIES_FILE` | 可选的 yt-dlp cookies 文件路径；未指定时读取数据目录的 `private/youtube-cookies.txt`。每次下载检查文件，存在则使用，缺失则默认下载；登录失败不会自动退回匿名重试。导出浏览器 cookies 需用户授权，服务本身不读取浏览器；POSIX 私有目录权限 0700、文件 0600，Windows 需用 NTFS ACL 限制为当前用户，不提交或上传 |
+| `KARAOKE_FONT_FILE` | 完整字体路径；Windows/Linux 请配置覆盖对应语言的 Noto Serif CJK 字体 |
 | `KARAOKE_DISABLE_LYRIC_CATALOG` | 设为 `1` 时强制走自动歌词，用于测试新歌流程 |
 
 单进程、单 GPU 队列运行；不要给同一数据目录启动多个 Uvicorn worker。`none` 模式下所有已点歌曲可进入流水线，同类阶段按 `KARAOKE_COMPUTE_CONCURRENCY` 限制并发，下载和视频编码仍各为一个槽位，不同阶段可以交错；`/health.preparation_concurrency` 返回 `null`，`running_jobs` 和房间快照的 `preparation_jobs` 列出全部在途任务，旧单数属性保留首项。暂停领取任务后，所有已经开始的歌曲仍会自然完成。并发处理各自监控共享缓存，并按运行任务数预留写入余量。独立的分离环境与主环境都需安装对应硬件的 PyTorch。已验证的硬件与依赖组合见 [SETUP](../SETUP.md#2-完整处理环境)，耗时记录见[性能说明](docs/lead-backing-performance.md)。

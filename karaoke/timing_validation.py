@@ -13,6 +13,7 @@ import numpy as np
 
 if __package__:
     from .anchors_from_asr import phrase_conflict
+    from .file_ops import replace_file
     from .subtitles import (
         acoustic_end,
         collapsed_phrase,
@@ -22,6 +23,7 @@ if __package__:
     )
 else:
     from anchors_from_asr import phrase_conflict
+    from file_ops import replace_file
     from subtitles import (
         acoustic_end,
         collapsed_phrase,
@@ -995,7 +997,7 @@ class AcousticReview:
         value=compute()
         temporary=path.with_suffix('.tmp')
         temporary.write_text(json.dumps(value,ensure_ascii=False,allow_nan=False))
-        temporary.replace(path)
+        replace_file(temporary, path)
         return value
 
     def observe(self, cue, wave, *, language):

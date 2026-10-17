@@ -967,7 +967,7 @@ artifacts={name:{'path':'alignment.bin','bytes':len(aligned.read_bytes())}
                 finally:
                     release_cancel.set()
                     try:
-                        os.killpg(parent, signal.SIGKILL)
+                        os.killpg(parent, signal.SIGKILL) if os.name != 'nt' else None
                     except ProcessLookupError:
                         pass
     asyncio.run(scenario())
