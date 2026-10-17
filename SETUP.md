@@ -156,6 +156,8 @@ cp karaoke/dependencies/english-alignment.json karaoke/research/word-onset-2026-
 | 合并字组及中日文提前句首的独立声学复核（可选） | [MMS_FA](https://dl.fbaipublicfiles.com/mms/torchaudio/ctc_alignment_mling_uroman/model.pt) | `karaoke/models/alignment/mms/model.pt` |
 | 中文残余字组的后备复核（可选） | [Qwen3 ForcedAligner 0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B/tree/c7cbfc2048c462b0d63a45797104fc9db3ad62b7) | `karaoke/models/alignment/qwen3-forced-aligner-0.6b/` |
 
+中文与日文 SOFA 权重是两套资源：已配置中文首歌不代表日文模型也已安装。处理日文前确认 `karaoke/models/alignment/sofa/japanese/akm_ja_v001/model.ckpt` 与同目录 `dict.txt` 存在，并按 `sofa-japanese.json` 校验；日文分词和假名注音另依赖主环境的 pyopenjtalk。Windows 安装的是 `pyopenjtalk-plus` 发行包，音素对齐报告也按该包名记录版本；导入名仍是 `pyopenjtalk`，不能以同名发行包不存在判定日文前端缺失。
+
 权重和压缩包的校验值分别记录在 [separation.json](karaoke/dependencies/separation.json)、[sofa-mandarin.json](karaoke/dependencies/sofa-mandarin.json)、[sofa-japanese.json](karaoke/dependencies/sofa-japanese.json)。`separation.json` 也保留了早期对照模型的来源；正式流程只需要 F 和 Anvuew。可用 `shasum -a 256 文件路径` 核对下载内容。上游若更新了 `main` 对应的文件，应以这里记录的 SHA-256 判断是否还是同一个模型。
 
 模型许可、商业使用条件和署名要求见[第三方说明](THIRD_PARTY.md)，其中列明 Anvuew 的 GPL 声明与可选 MMS_FA 的非商业条款。

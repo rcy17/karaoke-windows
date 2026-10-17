@@ -374,8 +374,9 @@ def video_song_info(metadata):
     elif not metadata.get('track'):
         # The common "artist - title" upload grammar is explicit too. Keep
         # the credited text, including bilingual names; never infer a singer
-        # from the channel. Unseparated prose remains unresolved.
-        parts = re.split(r'\s+[-–—]\s+', metadata.get('title') or '', maxsplit=1)
+        # from the channel. Multi-part titles have ambiguous credit order;
+        # preserve them for source lookup and structured metadata recovery.
+        parts = re.split(r'\s+[-–—]\s+', metadata.get('title') or '')
         if len(parts) == 2 and all(part.strip() for part in parts):
             title = re.sub(r'\s*[(（][^()（）\n]*(?:' + video_label + r')[^()（）\n]*[)）]\s*$',
                            '', parts[1], flags=re.I).strip()

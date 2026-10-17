@@ -1098,26 +1098,38 @@ def prepare_online_lyrics(request, metadata, duration, cache, model, catalog_roo
             artist_resolution = None
             # Retain a platform-confirmed performer while resolving an upload
             # title. A description can also credit producers or session players.
-            for key in ('title', 'artist'):
-                if request.get(key):
-                    continue
+            protected = {key for key in ('title', 'artist') if request.get(key) or
+                         (metadata.get('track') if key == 'title' else
+                          metadata.get('artist') or metadata.get('artists'))}
+            for key in ('title', 'artist', 'metadata'):
                 before = dict(song)
                 review = report.get('crosscheck', {})
-                confirmed_alias = confirmed_names.get(key)
-                # Try the recording's unused credit before an artist page can
-                # replace it with the same spelling that already found no text.
-                if (key == 'artist' and not artist_alias and not retained_lines and recording.get('artists')
-                        and identity(confirmed_alias) <= identity(song.get(key))):
-                    confirmed_alias, artist_resolution = resolve_recording_artists(recording, cache)
-                if confirmed_alias and not identity(confirmed_alias, title=key == 'title') <= identity(song.get(key), title=key == 'title'):
-                    song[key] = confirmed_alias
-                    description_text = None
-                elif not retained_lines or parsed:
-                    description_text = read_description([key], retry=True)
+                if key == 'metadata':
+                    # Platform upload labels can obscure both credits. After
+                    # those lookups fail, try the parsed pair together, even
+                    # when the description contains no actual lyric lines.
+                    fields = [field for field in ('title', 'artist') if field not in protected]
+                    if not fields:
+                        continue
+                    description_text = read_description(fields, retry=True)
+                else:
+                    if key in protected:
+                        continue
+                    confirmed_alias = confirmed_names.get(key)
+                    # Try the recording's unused credit before an artist page can
+                    # replace it with the same spelling that already found no text.
+                    if (key == 'artist' and not artist_alias and not retained_lines and recording.get('artists')
+                            and identity(confirmed_alias) <= identity(song.get(key))):
+                        confirmed_alias, artist_resolution = resolve_recording_artists(recording, cache)
+                    if confirmed_alias and not identity(confirmed_alias, title=key == 'title') <= identity(song.get(key), title=key == 'title'):
+                        song[key] = confirmed_alias
+                        description_text = None
+                    elif not retained_lines or parsed:
+                        description_text = read_description([key], retry=True)
+                    else:
+                        continue
                     if parsed is None and metadata_failure and not metadata_retries:
                         description_text = read_description([key], retry=True)
-                else:
-                    continue
                 if song == before:
                     continue
                 blocked = {r['provider']: (None, r) for r in report.get('crosscheck', {}).get('unavailable_sources', [])

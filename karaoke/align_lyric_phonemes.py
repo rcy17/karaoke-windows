@@ -257,7 +257,8 @@ def main():
             'fallback_units':sum(u.get('timing_source')=='prior_word_fallback' for c in cues for u in c['units']),
             'total_units':sum(len(c['units']) for c in cues),
             'fully_refined_lines':sum(all(u.get('timing_source')=='singing_phonemes' for u in c['units']) for c in cues),
-            'packages':{name:version(name) for name in ['torch','lightning','pyopenjtalk','pykakasi','librosa','numba']},
+            'packages':{name:version(name) for name in ['torch','lightning',
+                'pyopenjtalk-plus' if sys.platform=='win32' else 'pyopenjtalk','pykakasi','librosa','numba']},
             'runner_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'status':'Audio-based candidate; no human-labelled timing accuracy claimed'}
         (output/'cues.json').write_text(json.dumps(cues,ensure_ascii=False,indent=2)+'\n')
