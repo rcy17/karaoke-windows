@@ -785,9 +785,10 @@ function updateTime(position) {
       // Match the frozen first frame's rendered dots; the video takes over at t=0.
       overlay.replaceChildren(...Array.from({length:opening.dots}, (_, i) => {
         const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        const filled = opening.fill_mode === 'accumulate' ? i < opening.dots-remaining : i >= opening.dots-remaining;
         for (const [name, value] of Object.entries({cx:(opening.x ?? opening.width/2)+(i-(opening.dots-1)/2)*opening.spacing,
-          cy:opening.y, r:opening.radius, fill:i >= opening.dots-remaining ? opening.color : 'transparent',
-          stroke:i >= opening.dots-remaining ? opening.color : '#f6f4eca0', 'stroke-width':2})) dot.setAttribute(name, value);
+          cy:opening.y, r:opening.radius, fill:filled ? opening.color : 'transparent',
+          stroke:filled ? opening.color : '#f6f4eca0', 'stroke-width':2})) dot.setAttribute(name, value);
         return dot;
       }));
     }

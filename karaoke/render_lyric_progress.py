@@ -106,7 +106,7 @@ class Caption:
         return pages
 
     def countdown(self, remaining, total, *, page_at=None):
-        """Use the target page's fixed lyric prefix; exhausted dots become rings."""
+        """Fill the fixed lyric prefix from left to right, then keep it solid."""
         if self.pages:
             page = max(0, bisect_right(self.starts, self.starts[0] if page_at is None else page_at)-1)
             return self.pages[page].countdown(remaining, total)
@@ -118,7 +118,7 @@ class Caption:
             x = spec['x']+(index-(total-1)/2)*spec['spacing']
             radius = spec['radius']
             bounds = (x-radius, y-radius, x+radius, y+radius)
-            active = index >= total-remaining
+            active = index < total-remaining
             draw.ellipse((bounds[0]-1, bounds[1]-1, bounds[2]+1, bounds[3]+1), fill=(0, 0, 0, 190))
             draw.ellipse(bounds, fill=self.color+(255,) if active else (0, 0, 0, 0),
                          outline=self.color+(255,) if active else (246, 244, 236, 160), width=2)
@@ -337,6 +337,8 @@ def main():
                     picture.alpha_composite(current, offset)
                     if preparing:
                         picture.alpha_composite(caption.countdown(remaining, entry['dots'], page_at=entry['onset']), offset)
+                    elif any(event['line'] == index and event['onset'] <= instant for event in countdown):
+                        picture.alpha_composite(caption.countdown(0, countdown_spec['dots'], page_at=instant), offset)
                     shown.add(index)
                 process.stdin.write(picture.tobytes())
             process.stdin.close()
@@ -360,7 +362,7 @@ def main():
             height=row_height if args.next_line else None,
             style_overrides={**(row_styles[0] if args.next_line else {}),
                              'leading_space': prefix_width}).countdown_geometry
-        opening = dict(countdown[0], **geometry, width=width, height=720)
+        opening = dict(countdown[0], **geometry, width=width, height=720, fill_mode='accumulate')
         opening['y'] += overlay_top
     report = {'command': command, 'seconds': time.perf_counter()-started, 'start': args.start,
         'frame_rate': str(fps),
@@ -381,10 +383,11 @@ def main():
         'song_intro': intro,
         'opening_countdown': opening,
         'countdown': {'enabled': args.countdown, 'events': countdown,
-                      'placement': 'Inline before the target lyric; reserved prefix does not move when dots disappear',
+                      'placement': 'Inline before the target lyric; filled dots remain until the lyric leaves',
+                      'fill_mode': 'accumulate',
                       'prefix_width': prefix_width if args.countdown else 0,
                       'minimum_silence_seconds': TOKENS['countdown']['minimum_silence_seconds'],
-                      'policy': 'Three one-second dot steps, then empty rings held for one second before the acoustic onset'},
+                      'policy': 'Empty rings, then one additional solid dot each second; keep all three through the lyric'},
         'fallback_lines': [i+1 for i in sorted(shown) if not cues[i].get('units')],
         'estimated_lines': [i+1 for i in sorted(shown) if any(
             u.get('timing_source') == 'linear_fallback' for u in cues[i].get('units', []))]}
