@@ -254,15 +254,31 @@ def presentation_cues(cues, duration, lead=.2, tail=.4, bridge_gap=1.5):
                       'bridge_gap_seconds': bridge_gap, 'overlap_adjustments': changes}
 
 
-def read_ahead_state(cues, instant):
-    """Keep the current and next lines visible; advance only at sung onsets."""
-    if not cues:
-        return None, None
+def ktv_rows(cues, minimum_silence=4., preparation=4., restart_lines=()):
+    """Schedule fixed upper/lower rows without altering any acoustic times.
+
+    A completed row is replaced in place by its next phrase. Display gaps
+    restart the alternation; they do not constitute new acoustic evidence.
+    """
+    rows = [[], []]
     starts = [c['units'][0]['start'] if c.get('units')
               else c.get('aligned_start', c['start']) for c in cues]
-    current = max(0, bisect_right(starts, instant)-1)
-    following = current+1
-    return current, following if following < len(cues) else None
+    ends = [max(u['end'] for u in c['units']) if c.get('units')
+            else c.get('aligned_end', c['end']) for c in cues]
+    blocks = [0]
+    sounding_until = 0.
+    for i, start in enumerate(starts):
+        if i and (i in restart_lines or start-sounding_until >= minimum_silence):
+            blocks.append(i)
+        sounding_until = max(sounding_until, ends[i])
+    for first, stop in zip(blocks, [*blocks[1:], len(cues)]):
+        begin = 0. if first == 0 else max(0., starts[first]-preparation)
+        for i in range(first, stop):
+            slot = (i-first) % 2
+            show = begin if i < first+2 else min(ends[i-2], starts[i])
+            hide = min(ends[i], starts[i+2]) if i+2 < stop else ends[i]
+            rows[slot].append(dict(line=i, start=show, end=hide))
+    return rows
 
 
 def acoustic_end(unit):

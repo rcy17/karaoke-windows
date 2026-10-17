@@ -424,8 +424,9 @@ def caption_image(text, width=1280, height=None, font_file=None,
         line_height += TOKENS['furigana']['line_gap']*font_scale
     for i, line in enumerate(lines):
         length = widths[i]
-        x = ((width*supersample-length)/2 if spec['alignment'] == 'center'
-             else width*TOKENS['safe_x']*supersample)
+        x = ((width*supersample-length)/2 if spec['alignment'] == 'center' else
+             width*(1-TOKENS['safe_x'])*supersample-length if spec['alignment'] == 'right' else
+             width*TOKENS['safe_x']*supersample)
         y = baseline-(len(lines)-i-1)*line_height
         offset = text.find(line, cursor)
         if offset < 0:

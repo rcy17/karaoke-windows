@@ -17,27 +17,29 @@ from subtitle_style import (
     CaptionOverflow,
     caption_height,
     caption_image,
-    compact_caption_image,
     song_intro_image,
     static_video_scrim,
 )
-from subtitles import countdown_events, countdown_state, normalized, read_ahead_state
+from subtitles import countdown_events, countdown_state, ktv_rows, normalized
 
 
 class Caption:
     readings: tuple[tuple[int, int, str], ...]
 
-    def __init__(self, cue, style, language, readings=None):
+    def __init__(self, cue, style, language, readings=None, *, height=None, style_overrides=None):
         self.cue = cue
+        self.height = height or caption_height(language)
+        self.style_overrides = style_overrides
         self.readings, self.reading_warnings = (readings if readings is not None else
             resolve_readings(cue['text'], language=language))
         self.layout = {}
-        self.color = ImageColor.getrgb(STYLES[style].get('progress_color', '#efd29a'))
+        self.color = ImageColor.getrgb(STYLES[style].get('progress_color', '#4da3ff'))
         self.pages = []
         while True:
             try:
                 self.base = caption_image(cue['text'], style=style, language=language, layout_out=self.layout,
-                                          height=caption_height(language), readings=self.readings)
+                                          height=self.height, readings=self.readings,
+                                          style_overrides=self.style_overrides)
             except CaptionOverflow:
                 try:
                     self.pages = self.paginate(style, language)
@@ -57,7 +59,7 @@ class Caption:
         self.cache = {}
         spec = TOKENS['countdown']
         self.countdown_geometry = dict(radius=spec['radius'], spacing=spec['spacing'],
-            color=STYLES[style].get('progress_color', '#efd29a'),
+            color=STYLES[style].get('progress_color', '#4da3ff'),
             y=max(spec['radius']+3, self.layout.get('content_top', min(
                 c['top'] for c in self.layout['characters']))-spec['above_text']))
 
@@ -81,7 +83,7 @@ class Caption:
                 readings = tuple((a-begin,b-begin,kana) for a,b,kana in self.readings if begin <= a and b <= end)
                 try:
                     caption_image(text[begin:end], style=style, language=language,
-                                  height=caption_height(language), readings=readings)
+                                  height=self.height, readings=readings, style_overrides=self.style_overrides)
                 except CaptionOverflow:
                     high = middle-1
                 else:
@@ -92,7 +94,8 @@ class Caption:
             page = dict(self.cue, text=text[begin:end], units=[
                 dict(unit, first=unit['first']-begin, stop=unit['stop']-begin) for unit in units[first:fit]])
             readings = tuple((a-begin,b-begin,kana) for a,b,kana in self.readings if begin <= a and b <= end)
-            pages.append(Caption(page, style, language, (readings, self.reading_warnings)))
+            pages.append(Caption(page, style, language, (readings, self.reading_warnings),
+                                 height=self.height, style_overrides=self.style_overrides))
             first = fit
         return pages
 
@@ -183,7 +186,7 @@ def main():
     parser.add_argument('--language', required=True)
     parser.add_argument('--bottom-margin', type=int, default=64)
     parser.add_argument('--next-line', action=argparse.BooleanOptionalAction, default=True,
-                        help='Always show the next lyric line in white; advance at its first sung word')
+                        help='Use equal-size fixed upper-left and lower-right lyric rows')
     parser.add_argument('--countdown', action=argparse.BooleanOptionalAction, default=True,
                         help='Three-dot countdown before vocal entries following long gaps')
     parser.add_argument('--gain', type=float, default=1.)
@@ -200,17 +203,20 @@ def main():
     if any(c['end'] <= c['start'] for c in cues) or any(a['start'] >= b['start'] for a, b in zip(cues, cues[1:])):
         raise ValueError('Invalid display intervals')
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    main_height = caption_height(args.language)
-    preview_height = (64+(TOKENS['furigana']['preview_extra_height'] if args.language in ('Japanese', 'Cantonese') else 0)
-                      if args.next_line else 0)
-    args.bottom_margin = max(args.bottom_margin, preview_height)
-    width, height = 1280, main_height+preview_height
+    row_height = (TOKENS['ktv']['row_height'] +
+                  (TOKENS['furigana']['extra_height'] if args.language in ('Japanese', 'Cantonese') else 0))
+    width, height = 1280, row_height*2 if args.next_line else caption_height(args.language)
+    overlay_top = 720-height-args.bottom_margin
+    size = STYLES[args.style]['size']
+    row_styles = [dict(size=size, minimum_size=size, single_line_floor=size,
+                      maximum_lines=1, balanced_wrap=False, baseline_inset=TOKENS['ktv']['baseline_inset'],
+                      alignment=alignment) for alignment in ('left', 'right')]
     fps = video_frame_rate(args.video)
     started = time.perf_counter()
     report_progress(detail='检查画面对比度')
     scrim_path, background = static_video_scrim(args.video, args.output.with_suffix('.contrast.png'),
-        720-main_height-args.bottom_margin,
-        [STYLES[args.style]['color'], STYLES[args.style].get('progress_color', '#efd29a')])
+        overlay_top,
+        [STYLES[args.style]['color'], STYLES[args.style].get('progress_color', '#4da3ff')])
     intro = None
     intro_path = None
     if args.song_info:
@@ -248,7 +254,7 @@ def main():
         f'fps={fps},setpts=PTS-STARTPTS[base];[1:v]setpts=PTS-STARTPTS[text];')
     if scrim_path:
         filters += f'[base][{scrim_index}:v]overlay=0:0:format=auto[readable];'
-    filters += f'[{"readable" if scrim_path else "base"}][text]overlay=0:H-{main_height}-{args.bottom_margin}:format=auto'
+    filters += f'[{"readable" if scrim_path else "base"}][text]overlay=0:{overlay_top}:format=auto'
     if intro_path:
         assert intro is not None
         filters += (f'[captioned];[captioned][{intro_index}:v]overlay=0:{intro["top"]}:format=auto:'
@@ -264,11 +270,15 @@ def main():
         '-threads', '4', '-movflags', '+faststart', str(args.output)]
     blank = Image.new('RGBA', (width, height))
     cue_starts = [c['start'] for c in cues]
-    countdown = countdown_events(cues, minimum_silence=TOKENS['countdown']['minimum_silence_seconds'],
+    entries = countdown_events(cues, minimum_silence=TOKENS['countdown']['minimum_silence_seconds'],
         dots=TOKENS['countdown']['dots'], step_seconds=TOKENS['countdown']['step_seconds'],
-        settle_seconds=TOKENS['countdown']['settle_seconds']) if args.countdown else []
-    previous, caption = None, None
-    preview_previous, preview_image = None, None
+        settle_seconds=TOKENS['countdown']['settle_seconds'])
+    countdown = entries if args.countdown else []
+    rows = ktv_rows(cues, minimum_silence=TOKENS['countdown']['minimum_silence_seconds'],
+                    restart_lines={entry['line'] for entry in entries if entry['unit'] == 0})
+    row_starts = [[item['start'] for item in row] for row in rows]
+    slots = {item['line']: slot for slot, row in enumerate(rows) for item in row}
+    previous, captions = [None, None], [None, None]
     shown, pagination, readings_report = set(), {}, {}
     log = args.output.with_suffix('.ffmpeg.log')
     with log.open('w') as errors:
@@ -277,49 +287,43 @@ def main():
         try:
             for frame in progress_items(range(round(args.duration*fps)), 'frames'):
                 instant = args.start+frame/fps
-                preview = None
+                entry, remaining = countdown_state(countdown, instant)
+                selected = [None, None]
                 if args.next_line:
-                    index, preview = read_ahead_state(cues, instant)
+                    for slot, row in enumerate(rows):
+                        position = bisect_right(row_starts[slot], instant)-1
+                        if position >= 0 and instant < row[position]['end']:
+                            selected[slot] = row[position]['line']
+                    if entry is not None:
+                        selected[slots[entry['line']]] = entry['line']
                 else:
                     index = bisect_right(cue_starts, instant)-1
-                    if index < 0 or instant >= cues[index]['end']:
-                        index = None
-                entry, remaining = countdown_state(countdown, instant)
-                if entry is not None:
-                    # The previous singing has ended; prepare the next lyric without highlighting it early.
-                    index = entry['line']
-                    preview = index+1 if args.next_line and index+1 < len(cues) else None
-                picture = blank.copy() if preview_height else blank
-                if index is not None:
-                    if previous != index:
-                        caption = Caption(cues[index], args.style, args.language, readings[index])
+                    if index >= 0 and instant < cues[index]['end']:
+                        selected[0] = index
+                    if entry is not None:
+                        selected[0] = entry['line']
+                picture = blank.copy()
+                for slot, index in enumerate(selected):
+                    if index is None:
+                        continue
+                    if previous[slot] != index:
+                        captions[slot] = Caption(cues[index], args.style, args.language, readings[index],
+                            height=row_height if args.next_line else None,
+                            style_overrides=row_styles[slot] if args.next_line else None)
+                        caption = captions[slot]
                         if caption.pages:
                             pagination[index+1] = [dict(text=p.cue['text'], start=p.starts[0]) for p in caption.pages]
                         if args.language in ('Japanese', 'Cantonese'):
                             readings_report[index+1] = dict(spans=caption.readings, warnings=caption.reading_warnings)
-                        previous = index
-                    assert caption is not None
-                    current = caption.frame(instant, args.mode, page_at=entry['onset'] if entry is not None else None)
-                    if preview_height:
-                        picture.alpha_composite(current)
-                    else:
-                        picture = current
-                    if entry is not None:
-                        # Copy also in single-line mode so the cached caption remains unchanged.
-                        picture = picture.copy()
-                        picture.alpha_composite(caption.countdown(remaining, entry['dots']))
+                        previous[slot] = index
+                    caption = captions[slot]
+                    preparing = entry is not None and entry['line'] == index
+                    current = caption.frame(instant, args.mode, page_at=entry['onset'] if preparing else None)
+                    offset = (0, slot*row_height) if args.next_line else (0, 0)
+                    picture.alpha_composite(current, offset)
+                    if preparing:
+                        picture.alpha_composite(caption.countdown(remaining, entry['dots']), offset)
                     shown.add(index)
-                if preview is not None:
-                    if preview_previous != preview:
-                        preview_image = compact_caption_image(cues[preview]['text'], height=preview_height,
-                            style=args.style, language=args.language,
-                            readings=readings[preview][0],
-                            style_overrides={
-                                'size': 34, 'minimum_size': 26, 'single_line_floor': 34,
-                                'maximum_lines': 1, 'balanced_wrap': False, 'baseline_inset': 22})
-                        preview_previous = preview
-                    assert preview_image is not None
-                    picture.alpha_composite(preview_image, (0, main_height))
                 process.stdin.write(picture.tobytes())
             process.stdin.close()
             report_progress(detail='封装视频')
@@ -338,9 +342,11 @@ def main():
         raise ValueError('Incorrect rendered duration')
     opening = None
     if countdown and countdown[0]['start'] < 0:
-        geometry = Caption(cues[0], args.style, args.language, readings[0]).countdown_geometry
+        geometry = Caption(cues[0], args.style, args.language, readings[0],
+            height=row_height if args.next_line else None,
+            style_overrides=row_styles[0] if args.next_line else None).countdown_geometry
         opening = dict(countdown[0], **geometry, width=width, height=720)
-        opening['y'] += 720-main_height-args.bottom_margin
+        opening['y'] += overlay_top
     report = {'command': command, 'seconds': time.perf_counter()-started, 'start': args.start,
         'frame_rate': str(fps),
         'duration': args.duration, 'mode': args.mode, 'style': args.style, 'style_version': TOKENS['version'],
@@ -354,7 +360,9 @@ def main():
         'decode_check': 'pending_final_mux' if args.video_only else 'passed', 'probe': probe,
         'motion': 'Fixed text positions; hard line cuts; linear left-to-right fill within each existing timing unit',
         'next_line_enabled': args.next_line,
-        'read_ahead_strategy': 'Current and next lines visible; advance at sung onsets, with white preparation during long-gap countdowns',
+        'read_ahead_strategy': 'Equal-size fixed upper-left/lower-right rows; replace completed rows in place; restart upper-left after long gaps',
+        'row_schedule': rows if args.next_line else [],
+        'row_style_overrides': row_styles if args.next_line else [],
         'song_intro': intro,
         'opening_countdown': opening,
         'countdown': {'enabled': args.countdown, 'events': countdown,

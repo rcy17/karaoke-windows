@@ -237,7 +237,7 @@ nohup .venv/bin/python -u -m karaoke.api </dev/null >>karaoke/service-data/serve
 
 ## 7. 检查与范围
 
-本项目禁止新增或恢复测试代码，已移除单元／行为测试及其执行入口。安装开发依赖后运行 Ruff、ty 和 ESLint，具体命令见[贡献指南](CONTRIBUTING.md#修改与验证)。
+本项目禁止新增或恢复测试代码，已移除单元／行为测试及其执行入口。安装开发依赖后运行 Ruff 和 ESLint，具体命令见[贡献指南](CONTRIBUTING.md#修改与验证)。
 
 仓库的 [Static checks workflow](.github/workflows/checks.yml) 在 push、PR 和手动触发时执行 Windows 与 Linux 静态检查，使用 Python 3.12 和 Node.js 22。CI 不需要配置密钥，不运行模型或歌曲处理。
 

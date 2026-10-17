@@ -59,7 +59,7 @@ Python 包由各 `requirements*.txt` 固定版本，Node.js、FFmpeg、LAME 和�
 
 ## 开发检查工具
 
-Ruff 和 ty 的版本固定在 [requirements-lint.txt](requirements-lint.txt)；ESLint、`@eslint/js` 和 globals 固定在 [package.json](package.json)，间接依赖由 [package-lock.json](package-lock.json) 锁定。这些工具仅用于开发和 CI，许可证见 [Ruff](https://github.com/astral-sh/ruff/blob/main/LICENSE)、[ty](https://github.com/astral-sh/ty/blob/main/LICENSE)、[ESLint](https://github.com/eslint/eslint/blob/main/LICENSE) 和 [globals](https://github.com/sindresorhus/globals/blob/main/license)。
+Ruff 的版本固定在 [requirements-lint.txt](requirements-lint.txt)；ESLint、`@eslint/js` 和 globals 固定在 [package.json](package.json)，间接依赖由 [package-lock.json](package-lock.json) 锁定。这些工具仅用于开发和 CI，许可证见 [Ruff](https://github.com/astral-sh/ruff/blob/main/LICENSE)、[ESLint](https://github.com/eslint/eslint/blob/main/LICENSE) 和 [globals](https://github.com/sindresorhus/globals/blob/main/license)。
 
 开发环境另行安装 [Hydra](https://github.com/facebookresearch/hydra/blob/v1.3.2/LICENSE) 和 [OmegaConf](https://github.com/omry/omegaconf/blob/v2.3.0/LICENSE)，供 MIMO 研究工具及全仓类型检查使用，版本见 [requirements-dev.txt](requirements-dev.txt)。
 

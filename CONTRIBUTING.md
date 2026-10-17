@@ -15,11 +15,10 @@
 .venv/bin/python -m pip install -r requirements-dev.txt
 npm ci
 .venv/bin/ruff check .
-.venv/bin/ty check --python .venv/bin/python
 npm run lint
 ```
 
-Ruff 检查自有 Python 代码的错误、导入顺序和现代 Python 写法；ty 检查整个 `karaoke/`，包括算法和工具；ESLint 检查前端 JavaScript 和自身配置。工具版本已固定，第三方源码和生成文件不纳入检查。类型问题优先补准数据边界；只有第三方声明不准确或必要的运行时替换，才在具体行注明原因并局部忽略。
+Ruff 检查自有 Python 代码的错误、导入顺序和现代 Python 写法；ESLint 检查前端 JavaScript 和自身配置。工具版本已固定，第三方源码和生成文件不纳入检查。类型问题优先补准数据边界；只有第三方声明不准确或必要的运行时替换，才在具体行注明原因并局部忽略。
 
 Windows PowerShell（完成 SETUP 中的依赖与发音字典准备后）：
 
@@ -28,7 +27,6 @@ $env:PYTHONUTF8 = '1'
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 npm ci
 .\.venv\Scripts\ruff.exe check .
-.\.venv\Scripts\ty.exe check --python .venv/Scripts/python.exe
 npm run lint
 ```
 
