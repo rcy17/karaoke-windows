@@ -682,6 +682,11 @@ class LeasedFileResponse(FileResponse):
 
 def create_app(data_dir=None, *, worker_command=None, version=None, cache_limit_bytes=None,
                worker_concurrency='env'):
+    # Windows registry associations can label JavaScript as text/plain, which
+    # browsers reject for modules. Keep our web asset types platform-independent.
+    for extension, media_type in {'.js': 'text/javascript', '.mjs': 'text/javascript',
+                                  '.css': 'text/css', '.wasm': 'application/wasm'}.items():
+        mimetypes.add_type(media_type, extension)
     store = Store(data_dir or os.getenv('KARAOKE_DATA_DIR', str(ROOT/'service-data')), cache_limit_bytes)
     if version is None:
         from .local_asr import configuration

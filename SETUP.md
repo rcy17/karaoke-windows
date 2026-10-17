@@ -35,6 +35,16 @@ $env:KARAOKE_WHISPER_BATCH_SIZE = '1'
 
 Windows 的日文文本前端固定安装 `pyopenjtalk-plus==0.4.1.post7`，仍以 `import pyopenjtalk` 调用，附带预编译扩展与字典，避免要求用户自行编译 C++。该版本通过原项目的日文读音反例；升级前需重跑发音与字幕测试，不能只检查包能导入。macOS/Linux 保留原 pyopenjtalk；许可见 [第三方说明](THIRD_PARTY.md)。本地 ASR 的 CTranslate2 CUDA 运行时与 PyTorch CUDA wheel 是两套依赖，仍需按下文准备 CUDA 12 cuBLAS/cuDNN 9；未具备时先使用 CPU，不能据此宣称 GPU 可用。
 
+Windows NVIDIA 环境可使用匹配的 `torch==2.11.0` / `torchaudio==2.11.0` CUDA 12.8 wheel（将上面两处 index-url 换为 `https://download.pytorch.org/whl/cu128`）。已在 RTX 4070 Ti SUPER 16 GB、驱动 610.74 上验证 CUDA 分离和本地 ASR；主环境 wheel 附带的 cuBLAS/cuDNN DLL 位于 `.venv/Lib/site-packages/torch/lib`，需在启动服务前加入 PATH，供 CTranslate2 子进程加载：
+
+```powershell
+$env:PATH = "$(Resolve-Path .venv/Lib/site-packages/torch/lib);$env:PATH"
+$env:KARAOKE_DEVICE = 'cuda'
+.\.venv\Scripts\python.exe -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+设备可见只代表运行时检查通过；仍需运行本地 ASR 和第 6 节整曲队列验收。其他驱动、显卡或 wheel 组合应重新验证，不直接沿用该结果。
+
 继续完成第 3、4 节的源码与模型准备。Windows 与其他系统使用相同的仓库内模型路径；`git clone` / `git checkout` 命令可直接执行。把 `mkdir -p 路径` 换成 `New-Item -ItemType Directory -Force 路径`，`cp` 换成 `Copy-Item`，虚拟环境的 `bin/python` 换成 `Scripts/python.exe`。ZIP 可用 `Expand-Archive`，tar 包用 Windows `tar -xf`；SHA-256 用 `Get-FileHash -Algorithm SHA256 文件路径`。含 `export` 的命令在 PowerShell 写成 `$env:变量名 = '值'`。这些设置仅作用于当前终端及其子进程，重启终端后需重新设置。
 
 字幕需要完整字体文件：安装覆盖歌曲语言的 Noto Serif CJK，在启动终端设置 `$env:KARAOKE_FONT_FILE = 'C:\路径\NotoSerifCJK-Regular.ttc'`。Windows 不依赖 macOS 字体目录或 Linux Fontconfig；缺字仍明确报错，不能以方框代替歌词。Qwen 独立环境同理设置 `KARAOKE_QWEN_PYTHON` 为其 `Scripts/python.exe`。
@@ -47,6 +57,8 @@ $env:PYTHONUTF8 = '1'
 ```
 
 打开 <http://127.0.0.1:8746/>，在启动终端按 Ctrl+C 停止。保留经过验证的代理／网络设置；不要为本项目直接清空代理。只有完成第 6 节整曲首歌验收，才能称为可唱环境；空网页启动和行为测试不能证明本机分离、GPU、下载、整曲对齐均已验收。
+
+应用固定 JavaScript、CSS 和 WASM 静态资源的 MIME 类型，避免 Windows 注册表把 `.js` 标为 `text/plain`，使浏览器只显示外壳却拒绝执行模块。无需修改系统注册表；更新服务后用 Ctrl+F5 强制刷新网页，清除旧响应的缓存，并确认曲库与 SSE 状态正常加载。
 
 ## 1. 网页与任务服务
 

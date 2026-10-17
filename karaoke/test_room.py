@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import mimetypes
 import sys
 import time
 from contextlib import contextmanager
@@ -20,6 +21,25 @@ from karaoke.test_api import URL, cache_fixture, fake_worker, finished
 async def read_room_event(stream):
     text = (await anext(stream) + await anext(stream)).decode()
     return json.loads(text.split('data: ', 1)[1])
+
+
+@pytest.mark.parametrize('prefix', ['/assets', '/ui/test'])
+def test_web_modules_ignore_incorrect_system_mime_types(tmp_path, monkeypatch, prefix):
+    mimetypes.init()
+    for extension in ('.js', '.mjs', '.css'):
+        monkeypatch.setitem(mimetypes.types_map, extension, 'text/plain')
+    with TestClient(create_app(tmp_path, version='test')) as client:
+        for path, expected in [('app.js', 'text/javascript'),
+                               ('vendor/signalsmith-stretch.mjs', 'text/javascript'),
+                               ('style.css', 'text/css')]:
+            url = f'{prefix}/{path}'
+            response = client.get(url)
+            assert response.status_code == 200
+            assert response.headers['content-type'].split(';')[0] == expected
+            partial = client.get(url, headers={'Range': 'bytes=0-31'})
+            assert partial.status_code == 206
+            assert partial.content == response.content[:32]
+            assert client.get(url, headers={'If-None-Match': response.headers['etag']}).status_code == 304
 
 
 def ready_job(store, url=URL):
