@@ -261,6 +261,8 @@ def ktv_rows(cues, minimum_silence=4., preparation=4., restart_lines=()):
     restart the alternation; they do not constitute new acoustic evidence.
     """
     rows = [[], []]
+    if not cues:
+        return rows
     starts = [c['units'][0]['start'] if c.get('units')
               else c.get('aligned_start', c['start']) for c in cues]
     ends = [max(u['end'] for u in c['units']) if c.get('units')
@@ -272,7 +274,7 @@ def ktv_rows(cues, minimum_silence=4., preparation=4., restart_lines=()):
             blocks.append(i)
         sounding_until = max(sounding_until, ends[i])
     for first, stop in zip(blocks, [*blocks[1:], len(cues)]):
-        begin = 0. if first == 0 else max(0., starts[first]-preparation)
+        begin = max(0., starts[first]-preparation)
         for i in range(first, stop):
             slot = (i-first) % 2
             show = begin if i < first+2 else min(ends[i-2], starts[i])
