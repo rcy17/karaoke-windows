@@ -1,5 +1,5 @@
 {
-  "version": 11,
+  "version": 12,
   "default_style": "cinema_focus",
   "reference_width": 1280,
   "strip_height": 200,
@@ -31,7 +31,8 @@
     "settle_seconds": 1,
     "radius": 6,
     "spacing": 22,
-    "above_text": 20
+    "above_text": 20,
+    "inline_gap": 18
   },
   "styles": {
     "cinema_focus": {

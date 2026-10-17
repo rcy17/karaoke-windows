@@ -60,8 +60,14 @@ class Caption:
         spec = TOKENS['countdown']
         self.countdown_geometry = dict(radius=spec['radius'], spacing=spec['spacing'],
             color=STYLES[style].get('progress_color', '#4da3ff'),
+            x=self.base.width/2,
             y=max(spec['radius']+3, self.layout.get('content_top', min(
                 c['top'] for c in self.layout['characters']))-spec['above_text']))
+        if (self.style_overrides or {}).get('leading_space'):
+            first = next(c for c in self.layout['characters'] if not c['character'].isspace())
+            self.countdown_geometry.update(
+                x=first['left']-spec['inline_gap']-spec['radius']-(spec['dots']-1)*spec['spacing']/2,
+                y=(first['top']+first['bottom'])/2)
 
     def paginate(self, style, language):
         """Change only the display pages, at existing measured unit boundaries."""
@@ -99,14 +105,17 @@ class Caption:
             first = fit
         return pages
 
-    def countdown(self, remaining, total):
-        """Fixed dot positions above the lyric; exhausted dots become faint rings."""
+    def countdown(self, remaining, total, *, page_at=None):
+        """Use the target page's fixed lyric prefix; exhausted dots become rings."""
+        if self.pages:
+            page = max(0, bisect_right(self.starts, self.starts[0] if page_at is None else page_at)-1)
+            return self.pages[page].countdown(remaining, total)
         spec = self.countdown_geometry
         image = Image.new('RGBA', self.base.size)
         draw = ImageDraw.Draw(image)
         y = spec['y']
         for index in range(total):
-            x = image.width/2+(index-(total-1)/2)*spec['spacing']
+            x = spec['x']+(index-(total-1)/2)*spec['spacing']
             radius = spec['radius']
             bounds = (x-radius, y-radius, x+radius, y+radius)
             active = index >= total-remaining
@@ -226,7 +235,7 @@ def main():
                            else cues[0].get('aligned_start', cues[0]['start']) if cues else float('inf'))
             end = min(TOKENS['intro']['maximum_seconds'], max(TOKENS['intro']['minimum_seconds'], first_onset))
             intro = {'information': info, 'start': 0., 'end': end, 'top': TOKENS['intro']['top'],
-                     'policy': 'Credits above the always-visible lyrics; no audio or lyric timing offset',
+                     'policy': 'Credits above the lyric area; no audio or lyric timing offset',
                      'visible_in_this_export': args.start < end}
             if intro['visible_in_this_export']:
                 intro_path = args.output.with_suffix('.intro.png')
@@ -274,6 +283,10 @@ def main():
         dots=TOKENS['countdown']['dots'], step_seconds=TOKENS['countdown']['step_seconds'],
         settle_seconds=TOKENS['countdown']['settle_seconds'])
     countdown = entries if args.countdown else []
+    countdown_lines = {entry['line'] for entry in countdown}
+    countdown_spec = TOKENS['countdown']
+    prefix_width = (2*countdown_spec['radius']+(countdown_spec['dots']-1)*countdown_spec['spacing']
+                    +countdown_spec['inline_gap'])
     rows = ktv_rows(cues, minimum_silence=TOKENS['countdown']['minimum_silence_seconds'],
                     restart_lines={entry['line'] for entry in entries if entry['unit'] == 0})
     row_starts = [[item['start'] for item in row] for row in rows]
@@ -309,7 +322,8 @@ def main():
                     if previous[slot] != index:
                         captions[slot] = Caption(cues[index], args.style, args.language, readings[index],
                             height=row_height if args.next_line else None,
-                            style_overrides=row_styles[slot] if args.next_line else None)
+                            style_overrides={**(row_styles[slot] if args.next_line else {}),
+                                'leading_space': prefix_width if index in countdown_lines else 0})
                         caption = captions[slot]
                         if caption.pages:
                             pagination[index+1] = [dict(text=p.cue['text'], start=p.starts[0]) for p in caption.pages]
@@ -322,7 +336,7 @@ def main():
                     offset = (0, slot*row_height) if args.next_line else (0, 0)
                     picture.alpha_composite(current, offset)
                     if preparing:
-                        picture.alpha_composite(caption.countdown(remaining, entry['dots']), offset)
+                        picture.alpha_composite(caption.countdown(remaining, entry['dots'], page_at=entry['onset']), offset)
                     shown.add(index)
                 process.stdin.write(picture.tobytes())
             process.stdin.close()
@@ -344,7 +358,8 @@ def main():
     if countdown and countdown[0]['start'] < 0:
         geometry = Caption(cues[0], args.style, args.language, readings[0],
             height=row_height if args.next_line else None,
-            style_overrides=row_styles[0] if args.next_line else None).countdown_geometry
+            style_overrides={**(row_styles[0] if args.next_line else {}),
+                             'leading_space': prefix_width}).countdown_geometry
         opening = dict(countdown[0], **geometry, width=width, height=720)
         opening['y'] += overlay_top
     report = {'command': command, 'seconds': time.perf_counter()-started, 'start': args.start,
@@ -366,6 +381,8 @@ def main():
         'song_intro': intro,
         'opening_countdown': opening,
         'countdown': {'enabled': args.countdown, 'events': countdown,
+                      'placement': 'Inline before the target lyric; reserved prefix does not move when dots disappear',
+                      'prefix_width': prefix_width if args.countdown else 0,
                       'minimum_silence_seconds': TOKENS['countdown']['minimum_silence_seconds'],
                       'policy': 'Three one-second dot steps, then empty rings held for one second before the acoustic onset'},
         'fallback_lines': [i+1 for i in sorted(shown) if not cues[i].get('units')],

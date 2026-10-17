@@ -387,7 +387,8 @@ def caption_image(text, width=1280, height=None, font_file=None,
     path, index, script = resolve_font(text, style, language, font_file)
     font_scale = scale*supersample
     tracking_em = spec['latin_tracking_em'] if script == 'Latin' else spec['tracking_em']
-    maximum = width*(1-2*TOKENS['safe_x'])*supersample
+    leading = spec.get('leading_space', 0)*font_scale
+    maximum = width*(1-2*TOKENS['safe_x'])*supersample-leading
     one_line = [(size, True) for size in range(spec['size'], spec.get('single_line_floor', spec['size']+1)-1, -2)]
     sizes = one_line+[(size, False) for size in range(spec['size'], spec.get('minimum_size', TOKENS['minimum_font_size'])-1, -2)]
     for size, require_single in sizes:
@@ -424,9 +425,9 @@ def caption_image(text, width=1280, height=None, font_file=None,
         line_height += TOKENS['furigana']['line_gap']*font_scale
     for i, line in enumerate(lines):
         length = widths[i]
-        x = ((width*supersample-length)/2 if spec['alignment'] == 'center' else
+        x = ((width*supersample-length+leading)/2 if spec['alignment'] == 'center' else
              width*(1-TOKENS['safe_x'])*supersample-length if spec['alignment'] == 'right' else
-             width*TOKENS['safe_x']*supersample)
+             width*TOKENS['safe_x']*supersample+leading)
         y = baseline-(len(lines)-i-1)*line_height
         offset = text.find(line, cursor)
         if offset < 0:
