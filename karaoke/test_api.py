@@ -7104,6 +7104,12 @@ def test_publication_reselects_measured_candidates_under_acoustic_constraints(tm
     proof = dict(line=1, text='hello', first=0, stop=5, start_min=3.6, start_max=4.4, onset=4.)
     calls = []
     def run(stage, command):
+        if stage == 'align_timing':
+            from pathlib import Path
+            assert alternative == 'contradicted'
+            Path(command[command.index('--output')+1]).write_text(json.dumps(dict(
+                cues=original, attempts=[dict(accepted=False, reason='no usable alignment')])))
+            return
         current = json.loads((tmp_path/'timing-input.json').read_text())
         calls.append(current)
         assert ('--defer-constraints' in command) is (len(calls)==1)
@@ -7130,6 +7136,56 @@ def test_publication_reselects_measured_candidates_under_acoustic_constraints(tm
     assert len(calls) == (1 if alternative=='contradicted' else 2)
     evidence = json.loads((tmp_path/'timing-recovery.json').read_text())
     assert evidence['cues'] == original and evidence['report']['constraints'] == [proof]
+
+
+@pytest.mark.parametrize('repairs', [True, False])
+def test_new_word_measurements_must_pass_full_review_and_have_a_retry_limit(tmp_path, monkeypatch, repairs):
+    from copy import deepcopy
+    from pathlib import Path
+
+    from karaoke.timing_validation import timing_violations
+    pipeline=Pipeline(dict(url=URL),tmp_path,device='cpu')
+    lyrics=dict(lines=['hello'],language='English')
+    original: list[dict[str, Any]]=[dict(text='hello',start=1.,end=5.,units=[dict(text='hello',first=0,stop=5,start=1.,end=5.)])]
+    proof=dict(line=1,text='hello',first=0,stop=5,start_min=3.6,start_max=4.4,onset=4.)
+    for name,value in [('lyrics.json',lyrics),('cues.json',original),('quality.json',dict(kept=True)),
+                       ('timing-constraints.json',dict(constraints=[proof]))]:
+        (tmp_path/name).write_text(json.dumps(value))
+    calls=[]
+    def run(stage,command):
+        calls.append(stage)
+        assert json.loads((tmp_path/'timing-constraints.json').read_text())==dict(constraints=[proof])
+        if stage=='align_timing':
+            candidate=deepcopy(original)
+            if repairs:candidate[0]['units'][0]['start']=4.
+            Path(command[command.index('--output')+1]).write_text(json.dumps(dict(
+                cues=candidate,attempts=[dict(accepted=True)])))
+            return
+        assert stage=='validate_timing'
+        current=json.loads((tmp_path/'timing-input.json').read_text())
+        output=tmp_path/'timing-checked';output.mkdir(exist_ok=True)
+        (output/'cues.json').write_text(json.dumps(current))
+        (output/'report.json').write_text(json.dumps(dict(lines=[],constraints=[proof],
+            unresolved=timing_violations(current,[proof]))))
+    monkeypatch.setattr(pipeline,'run',run)
+    if repairs:
+        pipeline.validate_alignment(lyrics,6.)
+        assert calls==['validate_timing','align_timing','validate_timing']
+        quality=json.loads((tmp_path/'quality.json').read_text())
+        assert quality['kept'] is True and 'playback_fallback' not in quality
+        assert quality['timing_review']['unresolved']==[]
+        assert len(quality['timing_word_realign'])==1
+        assert json.loads((tmp_path/'cues.json').read_text())[0]['units'][0]['start']==4.
+    else:
+        with pytest.raises(StageFailure,match='未生成任何可用字幕'):
+            pipeline.validate_alignment(lyrics,6.)
+        assert calls.count('align_timing')==3 and calls.count('validate_timing')==4
+        assert not (tmp_path/'result.json').exists()
+    assert json.loads((tmp_path/'timing-realign-1/input.json').read_text())==original
+    archived=json.loads((tmp_path/'timing-recovery.json').read_text())['word_realign']
+    assert len(archived)==(1 if repairs else 3)
+    assert all(a['input']==original and a['report']['constraints']==[proof] for a in archived)
+    assert archived[0]['candidate']==json.loads((tmp_path/'timing-realign-1/candidate.json').read_text())
 
 
 @pytest.mark.parametrize('displaced', [False, True])

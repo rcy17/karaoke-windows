@@ -4354,4 +4354,60 @@ class AlignmentIntegrity(unittest.TestCase):
         self.assertLess(result[0]['end'],result[1]['start'])
 
 
+
+class DisprovedWordRealignment(unittest.TestCase):
+    def test_context_is_not_retimed_and_measured_words_still_require_review(self):
+        from copy import deepcopy
+
+        from timing_realign import realign_conflicts
+        from timing_validation import timing_violations
+        def cue(text, start, coarse=False):
+            return dict(text=text, start=start, end=start+1., units=[dict(text=text,
+                first=0, stop=len(text), start=start, end=start+1.,
+                timing_source='linear_fallback' if coarse else 'measured')])
+        cues=[cue('before', 2), cue('blue river', 5, True), cue('after', 8, True), cue('last', 13)]
+        saved=deepcopy(cues)
+        proof=dict(line=2,text='blue river',first=0,stop=4,start_min=6.5,start_max=6.7,onset=6.6)
+        calls=[]
+        def align(begin,end,text):
+            calls.append((begin,end,text))
+            def segment(words):
+                return dict(start=words[0]['start'],end=words[-1]['end'],words=words)
+            return dict(segments=[segment([dict(word='before',start=.5,end=1.5)]),
+                segment([dict(word='blue',start=4.7,end=5.1),dict(word=' river',start=5.3,end=5.9)]),
+                segment([dict(word='after',start=7.,end=8.)])])
+        result,attempts=realign_conflicts(cues,[proof],15.,'English',align)
+        self.assertEqual(cues,saved)
+        self.assertEqual(calls,[(1.4,13,'before\nblue river\nafter')])
+        self.assertEqual([result[0],result[3]],[cues[0],cues[3]])
+        self.assertEqual([u['start'] for u in result[1]['units']],[6.1,6.7])
+        self.assertTrue(attempts[0]['accepted'])
+        self.assertTrue(timing_violations(result,[proof]))  # Not a publication pass.
+        calls.clear()
+        unchanged,attempts=realign_conflicts(cues,[],15.,'English',align)
+        self.assertEqual(unchanged,cues)
+        self.assertEqual((attempts,calls),([],[]))
+
+    def test_bad_measurements_and_long_windows_keep_the_input(self):
+        from timing_realign import realign_conflicts
+        cue=dict(text='hello',start=1.,end=3.,units=[dict(text='hello',first=0,stop=5,start=1.,end=3.)])
+        proof=dict(line=1,text='hello',first=0,stop=5,start_min=2.,start_max=2.2,onset=2.1)
+        for raw in (None,dict(segments=[dict(start=1,end=1,words=[dict(word='hello',start=1,end=1)])]),
+                    dict(segments=[dict(start=1,end=2,words=[dict(word='other',start=1,end=2)])])):
+            with self.subTest(raw=raw):
+                result,attempts=realign_conflicts([cue],[proof],5.,'English',lambda *args:raw)
+                self.assertEqual(result,[cue])
+                self.assertFalse(attempts[0]['accepted'])
+                self.assertEqual(attempts[0]['result'],raw)
+        def forbidden(*args):
+            self.fail('Oversized windows must not run the model')
+        result,attempts=realign_conflicts([cue],[proof],80.,'English',forbidden)
+        self.assertEqual(result,[cue])
+        self.assertFalse(attempts[0]['accepted'])
+        def broken(*args):
+            raise RuntimeError('GPU unavailable')
+        with self.assertRaisesRegex(RuntimeError,'GPU unavailable'):
+            realign_conflicts([cue],[proof],5.,'English',broken)
+
+
 if __name__=='__main__':unittest.main()

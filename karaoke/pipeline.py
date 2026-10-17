@@ -1417,7 +1417,7 @@ class Pipeline:
             raise StageFailure('subtitles', '字幕与已定位的唱段不一致或遗漏重复唱段；音频位置证据已保留')
         return observations
 
-    def validate_alignment(self, lyrics, duration, lead=None, *, previous=None, context_windows=None):
+    def validate_alignment(self, lyrics, duration, lead=None, *, previous=None, context_windows=None, word_retries=0):
         from .timing_validation import timing_violations, validate_timeline
         cues = json.loads((self.output/'cues.json').read_text())
         write_json(self.output/'timing-input.json', cues)
@@ -1444,11 +1444,48 @@ class Pipeline:
         if not self.strict_audio and report['unresolved'] and timing_violations(checked, report['constraints']):
             # Reconsider existing measured candidates under the new evidence.
             # Keep every constraint and run the same review once on the result.
-            write_json(self.output/'timing-recovery.json', dict(cues=checked, report=report))
+            recovery_path = self.output/'timing-recovery.json'
+            history = json.loads(recovery_path.read_text()).get('word_realign', []) if word_retries else []
+            recovery = dict(cues=checked, report=report, word_realign=history)
+            write_json(recovery_path, recovery)
             quality = json.loads((self.output/'quality.json').read_text())
             self.aligned_cues = checked
-            self.playback_fallback(lyrics, duration, StageFailure('validate_timing',
-                '已有声学证据否定部分时间；正在检查保留的对齐候选'), constraints=report['constraints'])
+            try:
+                self.playback_fallback(lyrics, duration, StageFailure('validate_timing',
+                    '已有声学证据否定部分时间；正在检查保留的对齐候选'), constraints=report['constraints'])
+            except StageFailure:
+                if word_retries < 3:
+                    # Old merged word groups can crop both a phrase and its next
+                    # neighbour. Reobserve bounded phrases when no retained
+                    # candidate is usable; all acoustic constraints survive.
+                    repair = self.output/f'timing-realign-{word_retries+1}'
+                    repair.mkdir(exist_ok=True)
+                    write_json(repair/'input.json', checked)
+                    write_json(repair/'report.json', report)
+                    self.run('align_timing', [sys.executable, ROOT/'timing_realign.py',
+                        '--input', repair/'input.json', '--report', repair/'report.json',
+                        '--audio', self.output/'source-44100.wav', '--lyrics', self.output/'lyrics.json',
+                        '--output', repair/'candidate.json', '--device', self.device])
+                    candidate = json.loads((repair/'candidate.json').read_text())
+                    # This existing diagnostic survives completed-job compaction,
+                    # including on a server started before this worker update.
+                    history.append(dict(round=word_retries+1, input=checked, report=report,
+                        candidate=candidate, candidate_sha256=file_hash(repair/'candidate.json')))
+                    write_json(recovery_path, recovery)
+                    if any(attempt['accepted'] for attempt in candidate['attempts']):
+                        # The failed selection wrote partial-playback diagnostics.
+                        # They must not describe this new, complete candidate.
+                        quality.setdefault('timing_word_realign', []).append(dict(
+                            round=word_retries+1, diagnostic_sha256=file_hash(repair/'candidate.json')))
+                        write_json(self.output/'quality.json', quality)
+                        if 'playback_fallback' in quality:
+                            write_json(self.output/'playback-warning.json', quality['playback_fallback'])
+                        else:
+                            (self.output/'playback-warning.json').unlink(missing_ok=True)
+                        write_json(self.output/'cues.json', candidate['cues'])
+                        return self.validate_alignment(lyrics, duration, lead, previous=previous,
+                            context_windows=context_windows, word_retries=word_retries+1)
+                raise
             quality.update(json.loads((self.output/'quality.json').read_text()))
             quality['timing_candidate_recovery'] = dict(
                 lines=sorted({v['proof']['line'] for v in report['unresolved']}),
@@ -1501,7 +1538,7 @@ class Pipeline:
             context_windows = self.output/'timing-context-recovery.json'
             write_json(context_windows, dict(cues=checked, report=report,
                 observations=observations, windows=windows))
-            return self.validate_alignment(lyrics, duration, lead, context_windows=context_windows)
+            return self.validate_alignment(lyrics, duration, lead, context_windows=context_windows, word_retries=word_retries)
         quality = json.loads((self.output/'quality.json').read_text())
         quality.update(lines=len(checked), units=sum(len(c['units']) for c in checked),
             localization_validation=observations,
